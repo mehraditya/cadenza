@@ -1,16 +1,20 @@
-"""Cadenza Go1 — Developer API example.
+"""Cadenza Go1 — VLA + multi-modal sensing demo.
 
-Usage:
-    mjpython example.py
+   mjpython example.py
 """
-import cadenza as cadenza
+
+import cadenza
+from ai_models.go1 import VLA, Depth, RGB
 
 go1 = cadenza.go1()
 
-go1.run([
-    go1.stand(),
-    go1.walk_forward(speed=1.5, distance_m=2.0),
-    [go1.turn_left(), go1.walk_forward()],   # concurrent: walking arc
-    go1.jump(speed=2.0, extension=1.2),
-    go1.sit(),
-])
+go1.setup(
+    model=VLA(),
+    sense=[Depth(), RGB()],
+)
+
+go1.run(
+    goal="reach the green beacon at the top of the stairs and sit",
+    scene="stairs",
+    target=(-5.5, 0.0),
+)

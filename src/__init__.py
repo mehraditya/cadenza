@@ -32,6 +32,12 @@ from cadenza.sim import Sim, run
 from cadenza.go1 import Go1, Step
 from cadenza.g1 import G1
 
+# Base classes for client-side ai_models (cadenza ships no concrete models).
+from cadenza.stack.adapters.base import (
+    WorldModelAdapter, AdapterReply, ProposedAction,
+)
+from cadenza.stack.modalities.base import Modality, ModalityResult
+
 
 def go1(**kwargs) -> Go1:
     """Create a Go1 robot controller.

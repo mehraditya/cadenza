@@ -55,7 +55,7 @@ packages = [
 ]
 
 [tool.setuptools.package-data]
-cadenza = ["models/**/*"]
+cadenza = ["models/**/*", "library/**/*"]
 
 [dependency-groups]
 dev = [

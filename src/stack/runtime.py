@@ -109,6 +109,13 @@ class Stack:
     ) -> WorldModelHandle:
         if isinstance(world_model, WorldModelHandle):
             return world_model
+        if isinstance(world_model, WorldModelAdapter):
+            return WorldModelHandle(
+                adapter_cls=type(world_model),
+                checkpoint=None,
+                source="instance",
+                prebuilt=world_model,
+            )
         if world_model is None:
             return detect_world_model(root)
         # A string adapter name or class — wrap into a handle directly.

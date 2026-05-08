@@ -45,10 +45,29 @@ class G1:
     """
 
     def __init__(self, cam_distance: float = 4.0, cam_elevation: float = -15,
-                 cam_azimuth: float = 120):
+                 cam_azimuth: float = 120, xml_path: str | None = None):
         self._cam_distance = cam_distance
         self._cam_elevation = cam_elevation
         self._cam_azimuth = cam_azimuth
+        self._xml_path = xml_path
+        self._model = None
+        self._sense: list = []
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+
+    def setup(self, *, model=None, sense=None):
+        """Attach a world-model adapter and perception modalities for the next run.
+
+        Example::
+
+            from ai_models.g1 import VLA, Depth, RGB
+            g1 = cadenza.g1()
+            g1.setup(model=VLA(), sense=[Depth(), RGB()])
+            g1.run(goal="walk to the chair and sit", target=(2.0, 0.0))
+        """
+        self._model = model
+        self._sense = list(sense or [])
+        return self
 
     # ── Action methods (return descriptors, no execution) ────────────────
 
@@ -69,7 +88,61 @@ class G1:
 
     # ── Run ──────────────────────────────────────────────────────────────
 
-    def run(self, sequence: list):
+    def run(self, sequence: list | None = None, *,
+            goal: str | None = None,
+            scene: str | None = None,
+            target: tuple[float, float] | None = None,
+            on: str | None = None,
+            model=None, sense=None,
+            max_iterations: int = 250,
+            headless: bool = False,
+            verbose: bool = True):
+        """Execute a sequence of actions, or drive a goal with a world model.
+
+        Two shapes:
+
+        1. Scripted::
+
+            g1.run([g1.stand(), g1.walk_forward(distance_m=1.0), g1.crouch()])
+
+        2. World-model-driven (after ``setup``)::
+
+            g1.setup(model=VLA(), sense=[Depth(), RGB()])
+            g1.run(goal="walk to the chair", target=(2.0, 0.0))
+        """
+        if goal is not None:
+            return self._run_goal(
+                goal=goal, scene=scene, target=target, on=on,
+                model=model if model is not None else self._model,
+                sense=sense if sense is not None else self._sense,
+                max_iterations=max_iterations, headless=headless, verbose=verbose,
+            )
+        if sequence is None:
+            raise TypeError(
+                "G1.run() requires either a list of Steps or goal='...'"
+            )
+        return self._run_sequence(sequence)
+
+    def _run_goal(self, *, goal, scene, target, on, model, sense,
+                  max_iterations, headless, verbose):
+        if on is not None:
+            raise NotImplementedError(
+                f"on={on!r} not yet wired for goal mode; default sim only."
+            )
+        from cadenza.stack import run as stack_run
+        return stack_run(
+            robot="g1",
+            goal=goal,
+            target=target,
+            world_model=model,
+            modalities=sense or [],
+            xml_path=scene if scene else self._xml_path,
+            max_iterations=max_iterations,
+            headless=headless,
+            verbose=verbose,
+        )
+
+    def _run_sequence(self, sequence: list):
         """Execute actions in MuJoCo. Continuous physics, no teleporting."""
         from cadenza.g1_gait import (
             setup_model, _exec_stand, _exec_crouch,

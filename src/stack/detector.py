@@ -27,16 +27,19 @@ class WorldModelHandle:
     """Resolved world model: adapter class + checkpoint location + load state."""
     adapter_cls: type[WorldModelAdapter]
     checkpoint: Path | str | None
-    source: str                       # "root" | "hf-cache" | "process" | "registered" | "fallback"
+    source: str                       # "root" | "hf-cache" | "process" | "registered" | "fallback" | "instance"
     loaded_model: Any = None          # already-loaded model object, if any
     metadata: dict[str, Any] = field(default_factory=dict)
+    prebuilt: WorldModelAdapter | None = None  # already-instantiated adapter
 
     @property
     def name(self) -> str:
         return self.adapter_cls.name
 
     def build(self) -> WorldModelAdapter:
-        """Instantiate the adapter (does not load weights)."""
+        """Return the adapter. If prebuilt was supplied, hand it back as-is."""
+        if self.prebuilt is not None:
+            return self.prebuilt
         return self.adapter_cls(
             checkpoint=self.checkpoint,
             model=self.loaded_model,

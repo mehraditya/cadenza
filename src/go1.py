@@ -93,6 +93,24 @@ class Go1:
         self._cam_distance = cam_distance
         self._cam_elevation = cam_elevation
         self._cam_azimuth = cam_azimuth
+        self._model = None
+        self._sense: list = []
+
+    # ── Setup ────────────────────────────────────────────────────────────────
+
+    def setup(self, *, model=None, sense=None):
+        """Attach a world-model adapter and perception modalities for the next run.
+
+        Example::
+
+            from ai_models.go1 import VLA, Depth, RGB
+            go1 = cadenza.go1()
+            go1.setup(model=VLA(), sense=[Depth(), RGB()])
+            go1.run(goal="reach the beacon", scene="stairs", target=(-5.5, 0.0))
+        """
+        self._model = model
+        self._sense = list(sense or [])
+        return self
 
     # ── Action methods ────────────────────────────────────────────────────────
     # Each returns a Step descriptor. Nothing is executed until run().
@@ -187,28 +205,50 @@ class Go1:
 
     # ── Run ───────────────────────────────────────────────────────────────────
 
-    def run(self, sequence: list, vla: bool = False):
-        """Execute a sequence of actions.
+    def run(self, sequence: list | None = None, *,
+            vla: bool = False,
+            goal: str | None = None,
+            scene: str | None = None,
+            target: tuple[float, float] | None = None,
+            on: str | None = None,
+            model=None, sense=None,
+            max_iterations: int = 250,
+            headless: bool = False,
+            verbose: bool = True):
+        """Execute a sequence of actions, or drive a goal with a world model.
+
+        Two shapes:
+
+        1. Scripted::
+
+            go1.run([go1.stand(), go1.walk_forward(speed=1.5), go1.jump()])
+
+        2. World-model-driven (after ``setup``)::
+
+            go1.setup(model=VLA(), sense=[Depth(), RGB()])
+            go1.run(goal="reach the beacon", scene="stairs", target=(-5.5, 0.0))
 
         Args:
             sequence: List of Step objects (or nested lists for concurrency).
-                      Nested list = concurrent actions (gait commands are merged).
-            vla: If True, enable VLA guardian for obstacle avoidance.
-                 The VLA model (SmolVLM-256M) monitors the robot's camera
-                 and interjects avoidance actions when obstacles are detected.
-
-        Example::
-
-            go1.run([
-                go1.stand(),
-                go1.walk_forward(speed=1.5),
-                [go1.turn_left(), go1.walk_forward()],  # walk + turn = arc
-                go1.jump(speed=2.0),
-            ])
-
-            # With VLA obstacle avoidance:
-            go1.run([go1.walk_forward(distance_m=5.0)], vla=True)
+            vla: Light VLA guardian for obstacle avoidance during scripted runs.
+            goal: Natural-language goal — switches to the world-model loop.
+            scene: Bundled scene name (e.g. "stairs") or absolute XML path.
+            target: (x, y) target for arrival/closed-loop reasoning.
+            on: Execution target. ``None`` = local sim. (SSH/DDS/bridge later.)
+            model: Override the model attached via ``setup``.
+            sense: Override the modalities attached via ``setup``.
         """
+        if goal is not None:
+            return self._run_goal(
+                goal=goal, scene=scene, target=target, on=on,
+                model=model if model is not None else self._model,
+                sense=sense if sense is not None else self._sense,
+                max_iterations=max_iterations, headless=headless, verbose=verbose,
+            )
+        if sequence is None:
+            raise TypeError(
+                "Go1.run() requires either a list of Steps or goal='...'"
+            )
         from cadenza.sim import Sim
 
         sim = Sim("go1", xml_path=self._xml_path)
@@ -313,6 +353,50 @@ class Go1:
                     mujoco.mj_step(sim.model, sim.data)
                 viewer.sync()
                 time.sleep(0.02)
+
+    # ── Goal-driven (world-model loop) ────────────────────────────────────────
+
+    def _run_goal(self, *, goal, scene, target, on, model, sense,
+                  max_iterations, headless, verbose):
+        """World-model-driven loop. Forwards to cadenza.stack.run."""
+        if on is not None:
+            raise NotImplementedError(
+                f"on={on!r} not yet wired for goal mode; default sim only. "
+                f"Use go1.deploy_ssh / go1.deploy / go1.deploy_ssh_bridge for hardware."
+            )
+        from cadenza.stack import run as stack_run
+
+        xml_path = self._resolve_scene(scene)
+        return stack_run(
+            robot="go1",
+            goal=goal,
+            target=target,
+            world_model=model,
+            modalities=sense or [],
+            xml_path=xml_path,
+            max_iterations=max_iterations,
+            headless=headless,
+            verbose=verbose,
+        )
+
+    def _resolve_scene(self, scene: str | None) -> str | None:
+        """Bundled scene name → XML path. Absolute paths pass through."""
+        if scene is None:
+            return self._xml_path
+        from pathlib import Path
+        p = Path(scene)
+        if p.is_absolute() or p.exists():
+            return str(p)
+        bundled = _LIBRARY_DIR / "scenes" / f"{scene}.xml"
+        if bundled.exists():
+            return str(bundled)
+        # Fallback to robot terrain library (e.g. "terrain")
+        legacy = _LIBRARY_DIR / f"{scene}.xml"
+        if legacy.exists():
+            return str(legacy)
+        raise FileNotFoundError(
+            f"No bundled scene '{scene}' at {bundled} or {legacy}"
+        )
 
     # ── Reactive ──────────────────────────────────────────────────────────────
 

@@ -8,3 +8,7 @@ __pycache__/
 .venv313/
 data/
 .cache/
+cadenza_lab.egg-info/
+dist/
+cadenza_lab/
+uv.lock

@@ -1,9 +1,9 @@
-"""World-model adapters.
+"""World-model adapters — base ABC + registry only.
 
-Each adapter wraps a specific world model (pi_0.5, OpenVLA, Octo, GR00T, ...)
-and conforms to the WorldModelAdapter ABC. The detector picks the right
-adapter by inspecting what model is present at the project root or in the
-HuggingFace cache.
+Cadenza ships no concrete adapters. Define yours in your project (e.g. an
+``ai_models/`` folder) by subclassing ``WorldModelAdapter`` and decorating
+with ``@register_adapter`` (or pass the instance directly via
+``go1.setup(model=...)``).
 """
 
 from cadenza.stack.adapters.base import (
@@ -15,9 +15,6 @@ from cadenza.stack.adapters.base import (
     list_adapters,
 )
 from cadenza.stack.adapters.mock import MockAdapter
-from cadenza.stack.adapters.pi_zero import PiZeroAdapter
-from cadenza.stack.adapters.openvla import OpenVLAAdapter
-from cadenza.stack.adapters.smolvla import SmolVLAAdapter
 
 __all__ = [
     "WorldModelAdapter",
@@ -27,7 +24,4 @@ __all__ = [
     "get_adapter",
     "list_adapters",
     "MockAdapter",
-    "PiZeroAdapter",
-    "OpenVLAAdapter",
-    "SmolVLAAdapter",
 ]
