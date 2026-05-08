@@ -14,7 +14,6 @@ from cadenza.stack.adapters.base import (
     get_adapter,
     list_adapters,
 )
-from cadenza.stack.adapters.mock import MockAdapter
 
 __all__ = [
     "WorldModelAdapter",
@@ -23,5 +22,4 @@ __all__ = [
     "register_adapter",
     "get_adapter",
     "list_adapters",
-    "MockAdapter",
 ]

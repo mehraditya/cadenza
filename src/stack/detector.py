@@ -87,7 +87,6 @@ def detect_world_model(
     use_registered: bool = True,
     use_hf_cache: bool = True,
     use_process: bool = True,
-    fallback_adapter: str | None = "mock",
 ) -> WorldModelHandle:
     """Find a world model and return a handle bound to its adapter.
 
@@ -96,17 +95,15 @@ def detect_world_model(
       2. A checkpoint folder at ``root`` (or any of its first-level subdirs).
       3. A HuggingFace cache hit.
       4. A model already imported in the current process.
-      5. ``fallback_adapter`` (default: ``MockAdapter``) if nothing else hits.
 
-    Returns a ``WorldModelHandle``. Raises ``RuntimeError`` only if no fallback
-    is allowed and nothing was found.
+    Raises ``RuntimeError`` if no model is found. Pass an instance directly
+    via ``go1.setup(model=...)`` for the common path.
     """
     if use_registered and _REGISTERED is not None:
         return _REGISTERED
 
     root_path = Path(root).resolve()
 
-    # 2. Project root + first-level dirs.
     candidates = [root_path] + (
         [p for p in root_path.iterdir() if p.is_dir()]
         if root_path.exists() else []
@@ -124,7 +121,6 @@ def detect_world_model(
                     source="root",
                 )
 
-    # 3. HuggingFace cache (~/.cache/huggingface/hub).
     if use_hf_cache:
         hf_root = _hf_cache_dir()
         if hf_root and hf_root.exists():
@@ -137,25 +133,15 @@ def detect_world_model(
                         source="hf-cache",
                     )
 
-    # 4. Already-imported modules in this process.
     if use_process:
         proc_hit = _scan_process()
         if proc_hit:
             return proc_hit
 
-    # 5. Fallback.
-    if fallback_adapter:
-        cls = get_adapter(fallback_adapter)
-        return WorldModelHandle(
-            adapter_cls=cls,
-            checkpoint=None,
-            source="fallback",
-        )
-
     raise RuntimeError(
-        f"No world model detected at {root_path} and no fallback configured. "
-        f"Drop a checkpoint in the project root, install one via the HF cache, "
-        f"or call cadenza.stack.register_world_model(...)."
+        f"No world model found at {root_path}. "
+        f"Pass one via go1.setup(model=YourVLA()) or call "
+        f"cadenza.stack.register_world_model(...)."
     )
 
 
