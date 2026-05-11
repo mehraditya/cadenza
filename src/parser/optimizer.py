@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import numpy as np
+
 
 @dataclass
 class SensorSnapshot:
@@ -17,7 +19,14 @@ class SensorSnapshot:
     friction: float = 1.0
     roll: float = 0.0
     pitch: float = 0.0
+    yaw: float = 0.0
+    omega_roll: float = 0.0
+    omega_pitch: float = 0.0
     height: float = 0.0
+    body_height: float = 0.0
+    joint_pos: np.ndarray | None = None
+    joint_vel: np.ndarray | None = None
+    foot_contacts: np.ndarray | None = None
     stability: float = 1.0
 
 

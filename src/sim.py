@@ -27,29 +27,35 @@ _CRITICAL_OMEGA = 8.0       # rad/s — violent swinging
 # Humanoid robots — different kinematic structure
 _HUMANOID_ROBOTS = {"g1"}
 
-# Bundled models — keyed by robot name. ``models/`` lives at the project
-# root (one level above the cadenza package source dir).
-_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
-_BUNDLED = {
-    "go1": _MODELS_DIR / "go1" / "scene.xml",
-    "g1":  _MODELS_DIR / "g1"  / "scene.xml",
-}
+# Repo-local models/ (only present in source / editable installs). Wheel
+# installs do not ship this — they lazy-fetch into ~/.cache/cadenza/models/
+# via cadenza._assets.
+_REPO_MODELS_DIR = Path(__file__).resolve().parent.parent / "models"
 
 
 def _find_model(robot: str, xml_path: str | Path | None) -> Path:
     """Resolve the MuJoCo XML for a robot.
 
-    Priority: explicit path > bundled model.
+    Priority: explicit path > repo-local models/ > lazy-downloaded cache.
     """
     if xml_path is not None:
         p = Path(xml_path)
         if p.exists():
             return p
         raise FileNotFoundError(f"Model not found: {xml_path}")
-    if robot in _BUNDLED and _BUNDLED[robot].exists():
-        return _BUNDLED[robot]
+
+    repo_local = _REPO_MODELS_DIR / robot / "scene.xml"
+    if repo_local.exists():
+        return repo_local
+
+    from cadenza._assets import ensure_robot_assets
+    asset_dir = ensure_robot_assets(robot)
+    cached = asset_dir / "scene.xml"
+    if cached.exists():
+        return cached
     raise FileNotFoundError(
-        f"No model found for '{robot}'. Pass xml_path= or place it in {_MODELS_DIR}/{robot}/scene.xml"
+        f"No model found for '{robot}'. Pass xml_path= or check the "
+        f"contents of {asset_dir}."
     )
 
 
