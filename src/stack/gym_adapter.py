@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from cadenza.actions.library import ActionCall
+from cadenza.scene import Scene
 
 
 # ── Observation ───────────────────────────────────────────────────────────────
@@ -75,6 +76,7 @@ class GymAdapter:
         robot: str,
         *,
         xml_path: str | None = None,
+        scene: Scene | None = None,
         headless: bool = False,
         render_camera: bool = False,
         cam_distance: float = 0.0,
@@ -84,6 +86,7 @@ class GymAdapter:
     ):
         self.robot = robot
         self.xml_path = xml_path
+        self.scene = scene if scene is not None else Scene()
         self.headless = headless
         self.render_camera = render_camera
         self.max_action_seconds = max_action_seconds
@@ -97,6 +100,27 @@ class GymAdapter:
         self._step_count = 0
         self._opened = False
 
+    # ── Scene configuration ──────────────────────────────────────────────────
+    # Pass-throughs to self.scene so devs can populate the gym before reset().
+    # Adding objects after reset() has no effect until the next reset().
+
+    def add_box(self, position, size, *, fixed: bool = True, rgba=None) -> "GymAdapter":
+        self.scene.add_box(position, size, fixed=fixed, rgba=rgba)
+        return self
+
+    def add_sphere(self, position, radius, *, fixed: bool = True, rgba=None) -> "GymAdapter":
+        self.scene.add_sphere(position, radius, fixed=fixed, rgba=rgba)
+        return self
+
+    def add_slope(self, position, size, angle_deg, *, axis=(0.0, 1.0, 0.0),
+                  fixed: bool = True, rgba=None) -> "GymAdapter":
+        self.scene.add_slope(position, size, angle_deg, axis=axis, fixed=fixed, rgba=rgba)
+        return self
+
+    def clear_scene(self) -> "GymAdapter":
+        self.scene.clear()
+        return self
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def reset(self) -> Observation:
@@ -104,7 +128,7 @@ class GymAdapter:
         self.close()
         from cadenza.sim import Sim  # late import — pulls in mujoco
 
-        self._sim = Sim(self.robot, xml_path=self.xml_path)
+        self._sim = Sim(self.robot, xml_path=self.xml_path, scene=self.scene)
 
         if not self.headless:
             import mujoco.viewer

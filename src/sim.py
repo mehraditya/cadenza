@@ -91,8 +91,11 @@ class Sim:
     """
 
     def __init__(self, robot: str = "go1", xml_path: str | Path | None = None,
-                 disturbance: float | None = None, disturbance_seed: int | None = None):
+                 disturbance: float | None = None, disturbance_seed: int | None = None,
+                 scene: "Scene | None" = None):
         xml = _find_model(robot, xml_path)
+        if scene is not None and len(scene) > 0:
+            xml = scene.compile(xml)
         self.spec = get_spec(robot)
         self.lib = get_library(robot)
         self.translator = CommandParser(robot)
@@ -1057,3 +1060,37 @@ def run(commands: str | list[str], robot: str = "go1",
     """
     sim = Sim(robot=robot, disturbance=disturbance)
     sim.run(commands, **kwargs)
+
+
+def view(robot: str = "go1", scene: "Scene | None" = None, *,
+         xml_path: str | Path | None = None,
+         distance: float = 6.0, elevation: float = -20.0,
+         azimuth: float = 270.0,
+         lookat: tuple[float, float, float] = (-3.0, 0.0, 0.2),
+         hold_stand: bool = True) -> None:
+    """Open the MuJoCo viewer on a Sim+Scene and idle until the window closes.
+
+    Devs configuring a custom gym only need to declare the scene and call
+    this — no mujoco imports, no viewer plumbing, no physics loop. The
+    robot is held in its standing pose so it doesn't collapse while you
+    orbit / pan / zoom.
+
+    Usage::
+
+        scene = cadenza.Scene().add_box(position=(2, 0, 0.1), size=(0.2, 0.2, 0.1))
+        cadenza.view(robot="go1", scene=scene)
+    """
+    sim = Sim(robot=robot, xml_path=xml_path, scene=scene)
+    if hold_stand:
+        sim.data.ctrl[:] = np.array(sim.spec.poses.stand, dtype=np.float64)
+
+    print("Viewer open — orbit/pan/zoom. Close the window to exit.")
+    with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
+        viewer.cam.distance = distance
+        viewer.cam.elevation = elevation
+        viewer.cam.azimuth = azimuth
+        viewer.cam.lookat[:] = list(lookat)
+        while viewer.is_running():
+            for _ in range(sim._phys):
+                mujoco.mj_step(sim.model, sim.data)
+            viewer.sync()

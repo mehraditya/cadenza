@@ -12,3 +12,4 @@ cadenza_lab.egg-info/
 dist/
 cadenza_lab/
 uv.lock
+build/

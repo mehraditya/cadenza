@@ -28,9 +28,11 @@ from cadenza.actions import (
     ActionSpec, ActionPhase, ActionLibrary, ActionCall,
     get_action, list_actions, get_library,
 )
-from cadenza.sim import Sim, run
+from cadenza.sim import Sim, run, view
 from cadenza.go1 import Go1, Step
 from cadenza.g1 import G1
+from cadenza.scene import Scene, Box, Sphere, Slope
+from cadenza.stack.gym_adapter import GymAdapter, Observation
 
 # Base classes for client-side ai_models (cadenza ships no concrete models).
 from cadenza.stack.adapters.base import (
