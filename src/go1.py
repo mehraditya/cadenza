@@ -88,13 +88,37 @@ class Go1:
     """
 
     def __init__(self, cam_distance: float = 2.5, cam_elevation: float = -15,
-                 cam_azimuth: float = 270, xml_path: str | None = None):
+                 cam_azimuth: float = 270, xml_path: str | None = None,
+                 inference=None):
+        """
+        Args:
+            inference: VLA orchestration strategy controlling how the
+                model thinks and acts. Pass a class or instance from
+                ``cadenza.inference`` (e.g. ``Sequential``). ``None`` means
+                no VLA — actions execute open-loop.
+        """
         self._xml_path = xml_path
         self._cam_distance = cam_distance
         self._cam_elevation = cam_elevation
         self._cam_azimuth = cam_azimuth
         self._model = None
         self._sense: list = []
+        self._inference = self._resolve_inference(inference)
+
+    @staticmethod
+    def _resolve_inference(inference):
+        """Normalize ``inference=`` to an InferenceOrchestrator instance or None."""
+        if inference is None:
+            return None
+        from cadenza.inference.base import InferenceOrchestrator
+        if isinstance(inference, InferenceOrchestrator):
+            return inference
+        if isinstance(inference, type) and issubclass(inference, InferenceOrchestrator):
+            return inference()
+        raise TypeError(
+            "`inference=` must be an InferenceOrchestrator instance or "
+            f"subclass — got {type(inference).__name__!r}"
+        )
 
     # ── Setup ────────────────────────────────────────────────────────────────
 
@@ -206,7 +230,6 @@ class Go1:
     # ── Run ───────────────────────────────────────────────────────────────────
 
     def run(self, sequence: list | None = None, *,
-            vla: bool = False,
             goal: str | None = None,
             scene: str | None = None,
             target: tuple[float, float] | None = None,
@@ -221,7 +244,12 @@ class Go1:
 
         1. Scripted::
 
+            go1 = cadenza.go1()                         # no VLA
             go1.run([go1.stand(), go1.walk_forward(speed=1.5), go1.jump()])
+
+            from cadenza.inference import Sequential
+            go1 = cadenza.go1(inference=Sequential())   # think-and-move VLA
+            go1.run([go1.walk_forward(distance_m=5.0)])
 
         2. World-model-driven (after ``setup``)::
 
@@ -230,13 +258,15 @@ class Go1:
 
         Args:
             sequence: List of Step objects (or nested lists for concurrency).
-            vla: Light VLA guardian for obstacle avoidance during scripted runs.
             goal: Natural-language goal — switches to the world-model loop.
             scene: Bundled scene name (e.g. "stairs") or absolute XML path.
             target: (x, y) target for arrival/closed-loop reasoning.
             on: Execution target. ``None`` = local sim. (SSH/DDS/bridge later.)
             model: Override the model attached via ``setup``.
             sense: Override the modalities attached via ``setup``.
+
+        VLA orchestration is configured at construction via
+        ``cadenza.go1(inference=Sequential())``.
         """
         if goal is not None:
             return self._run_goal(
@@ -256,103 +286,62 @@ class Go1:
         spec = get_spec("go1")
         steps = self._normalize_sequence(sequence)
 
-        guardian = None
-        if vla:
-            from cadenza.vla import VLAGuardian
-            guardian = VLAGuardian("go1", show_camera=True)
-            guardian.load()
+        # Hand control of per-step VLA logic to the configured orchestrator,
+        # if any. Without one, actions execute open-loop with no model.
+        inference = self._inference
+        if inference is not None:
+            inference.setup("go1", sim, lib)
 
-        vla_label = "  VLA=ON" if vla else ""
-        print(f"\n  Cadenza Go1  |  {len(steps)} steps{vla_label}\n")
+        infer_label = (
+            f"  inference={inference.name or type(inference).__name__}"
+            if inference is not None else ""
+        )
+        print(f"\n  Cadenza Go1  |  {len(steps)} steps{infer_label}\n")
 
         lookat_z = spec.kin.com_height_stand * 0.5
 
-        with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
-            viewer.cam.distance = self._cam_distance
-            viewer.cam.elevation = self._cam_elevation
-            viewer.cam.azimuth = self._cam_azimuth
-            viewer.cam.lookat[:] = [0, 0, lookat_z]
+        try:
+            with mujoco.viewer.launch_passive(sim.model, sim.data) as viewer:
+                viewer.cam.distance = self._cam_distance
+                viewer.cam.elevation = self._cam_elevation
+                viewer.cam.azimuth = self._cam_azimuth
+                viewer.cam.lookat[:] = [0, 0, lookat_z]
 
-            i = 0
-            while i < len(steps):
-                if not viewer.is_running():
-                    break
+                for i, item in enumerate(steps):
+                    if not viewer.is_running():
+                        break
 
-                item = steps[i]
+                    if isinstance(item, list):
+                        names = " + ".join(s.name for s in item)
+                        print(f"  [{i+1}/{len(steps)}] [{names}]")
+                        self._execute_concurrent(item, sim, lib, viewer)
+                    else:
+                        print(f"  [{i+1}/{len(steps)}] {item.name}", end="")
+                        if item.speed != 1.0:
+                            print(f"  speed={item.speed}", end="")
+                        if item.distance_m > 0:
+                            print(f"  {item.distance_m:.1f}m", end="")
+                        print()
 
-                if isinstance(item, list):
-                    names = " + ".join(s.name for s in item)
-                    print(f"  [{i+1}/{len(steps)}] [{names}]")
-                    self._execute_concurrent(item, sim, lib, viewer)
-                    i += 1
-                else:
-                    print(f"  [{i+1}/{len(steps)}] {item.name}", end="")
-                    if item.speed != 1.0:
-                        print(f"  speed={item.speed}", end="")
-                    if item.distance_m > 0:
-                        print(f"  {item.distance_m:.1f}m", end="")
-                    print()
-
-                    result = self._execute_single(item, sim, lib, viewer,
-                                                  vla_guardian=guardian)
-
-                    if result is not None and hasattr(result, 'detected') and result.detected:
-                        # VLA interrupted — figure out remaining distance
-                        completed_frac = 0.0
-                        if hasattr(result, '_steps_completed') and hasattr(result, '_steps_total'):
-                            completed_frac = result._steps_completed / max(result._steps_total, 1)
-                        original_dist = item.distance_m or 0
-                        distance_done = original_dist * completed_frac
-                        distance_left = original_dist - distance_done
-
-                        print(f"\n  VLA INTERRUPT: obstacle {result.position} ({result.size})")
-                        print(f"       Completed {distance_done:.1f}m of {original_dist:.1f}m")
-                        print(f"       Remaining: {distance_left:.1f}m")
-
-                        # Execute avoidance — VLA OFF during this sequence
-                        avoidance = guardian.get_avoidance_steps(result)
-                        if avoidance:
-                            print(f"       Avoidance: {[s.name for s in avoidance]}\n")
-                            for av_step in avoidance:
-                                if not viewer.is_running():
-                                    break
-                                print(f"    >> {av_step.name}", end="")
-                                if av_step.distance_m > 0:
-                                    print(f"  {av_step.distance_m:.1f}m", end="")
-                                print()
-                                self._execute_single(av_step, sim, lib, viewer)
-                                viewer.cam.lookat[:] = sim.data.qpos[0:3]
-                                viewer.cam.lookat[2] = max(
-                                    float(sim.data.qpos[2]) * 0.8, 0.15)
-
-                        # Resume the original action with remaining distance
-                        if distance_left > 0.1:
-                            resume = Step(
-                                name=item.name,
-                                speed=item.speed,
-                                extension=item.extension,
-                                distance_m=distance_left,
-                            )
-                            print(f"\n  RESUME: {item.name} {distance_left:.1f}m remaining\n")
-                            # Don't advance i — we'll re-run this step with remaining distance
-                            steps[i] = resume
-                            continue  # re-enter the loop with the reduced step
+                        if inference is not None:
+                            inference.run_step(item, sim, lib, viewer, self)
                         else:
-                            print(f"\n  VLA: action was nearly complete, moving on\n")
+                            self._execute_single(item, sim, lib, viewer)
 
-                    i += 1
+                    viewer.cam.lookat[:] = sim.data.qpos[0:3]
+                    viewer.cam.lookat[2] = max(float(sim.data.qpos[2]) * 0.8, 0.15)
 
-                viewer.cam.lookat[:] = sim.data.qpos[0:3]
-                viewer.cam.lookat[2] = max(float(sim.data.qpos[2]) * 0.8, 0.15)
-
-            print("\n  Done. Close viewer to exit.")
-            stand = np.array(spec.poses.stand, dtype=np.float64)
-            while viewer.is_running():
-                sim.data.ctrl[:] = stand
-                for _ in range(sim._phys):
-                    mujoco.mj_step(sim.model, sim.data)
-                viewer.sync()
-                time.sleep(0.02)
+                print("\n  Done. Close viewer to exit.")
+                stand = np.array(spec.poses.stand, dtype=np.float64)
+                while viewer.is_running():
+                    sim.data.ctrl[:] = stand
+                    for _ in range(sim._phys):
+                        mujoco.mj_step(sim.model, sim.data)
+                    viewer.sync()
+                    time.sleep(0.02)
+        finally:
+            if inference is not None:
+                inference.teardown()
 
     # ── Goal-driven (world-model loop) ────────────────────────────────────────
 

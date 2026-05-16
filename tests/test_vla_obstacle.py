@@ -12,9 +12,6 @@ import os
 import numpy as np
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-os.environ["KMP_DUPLICATE_LIB_OK"] = "TRUE"
-
 OBSTACLE_SCENE = str(
     Path(__file__).resolve().parent.parent / "cadenza" / "models" / "go1" / "obstacle_scene.xml"
 )
