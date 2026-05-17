@@ -214,14 +214,33 @@ class Scene:
 
     # ── Compilation ─────────────────────────────────────────────────────────
 
-    def compile(self, base_xml: Path) -> Path:
-        """Inject objects into `base_xml` and return path to the compiled XML.
+    def compile(self, base_xml: Path,
+                out_path: "Path | str | None" = None) -> Path:
+        """Inject objects into ``base_xml`` and return path to the compiled XML.
 
-        The output sits next to `base_xml` so MuJoCo can still resolve any
-        relative `meshdir` / mesh `file=` paths. If no objects were added,
-        returns `base_xml` unchanged.
+        Args:
+            base_xml: source MuJoCo scene file to extend.
+            out_path: optional destination for the compiled XML.
+
+                * ``None`` (default): write next to ``base_xml`` —
+                  preserves backward compatibility with the bundled scenes;
+                  mesh / texture references stay relative.
+                * ``"some/dir/"`` (directory): a fresh
+                  ``_cadenza_scene_<id>.xml`` is dropped inside; the dir is
+                  created if missing.
+                * ``"some/path/scene.xml"`` (file): written to that exact
+                  path; ``.parent`` is created if missing.
+
+                When ``out_path`` is given, the compiled XML's
+                ``<compiler meshdir=… texturedir=…>`` are rewritten to the
+                absolute base-scene directory (and any ``<include file=…>``
+                resolved to absolute) so MuJoCo still finds every asset no
+                matter where the file is saved.
+
+        Returns:
+            Absolute path to the compiled XML.
         """
-        base_xml = Path(base_xml)
+        base_xml = Path(base_xml).resolve()
         if not self.objects:
             return base_xml
 
@@ -234,9 +253,58 @@ class Scene:
         for i, obj in enumerate(self.objects):
             self._inject(worldbody, obj, i)
 
-        out = base_xml.parent / f"_cadenza_scene_{id(self):x}.xml"
+        if out_path is None:
+            # Legacy behaviour: write next to the base XML so relative
+            # asset paths still resolve.
+            out = base_xml.parent / f"_cadenza_scene_{id(self):x}.xml"
+        else:
+            out = Path(out_path).expanduser()
+            if out.suffix.lower() != ".xml":
+                # Treat as a directory.
+                out = out / f"_cadenza_scene_{id(self):x}.xml"
+            out = out.resolve()
+            out.parent.mkdir(parents=True, exist_ok=True)
+            self._absolutize_asset_paths(root, base_xml.parent)
+
         tree.write(out, encoding="utf-8", xml_declaration=False)
         return out
+
+    # ── Asset-path rewriting (for custom out_path) ──────────────────────────
+
+    @staticmethod
+    def _absolutize_asset_paths(root: ET.Element, base_dir: Path) -> None:
+        """Rewrite asset references so the XML still loads from any location.
+
+        MuJoCo resolves ``<mesh file=…>`` / ``<texture file=…>`` against the
+        ``<compiler>`` element's ``meshdir`` / ``texturedir`` (each
+        defaulting to the XML's own directory). Moving the XML breaks
+        those lookups; we fix both compiler dirs to absolute paths derived
+        from the base scene's directory, and rewrite any ``<include>``
+        directives to absolute paths too.
+        """
+        base_dir = base_dir.resolve()
+
+        compiler = root.find("compiler")
+        if compiler is None:
+            compiler = ET.Element("compiler")
+            root.insert(0, compiler)
+
+        mesh_rel = compiler.attrib.get("meshdir")
+        compiler.attrib["meshdir"] = str(
+            (base_dir / mesh_rel).resolve() if mesh_rel else base_dir
+        )
+        tex_rel = compiler.attrib.get("texturedir")
+        compiler.attrib["texturedir"] = str(
+            (base_dir / tex_rel).resolve() if tex_rel else base_dir
+        )
+        asset_rel = compiler.attrib.get("assetdir")
+        if asset_rel:
+            compiler.attrib["assetdir"] = str((base_dir / asset_rel).resolve())
+
+        for include in root.iter("include"):
+            f = include.attrib.get("file")
+            if f and not Path(f).is_absolute():
+                include.attrib["file"] = str((base_dir / f).resolve())
 
     # ── Internal injection ──────────────────────────────────────────────────
 

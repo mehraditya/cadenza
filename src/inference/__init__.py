@@ -17,8 +17,10 @@ worker splits, multi-camera coordination, etc.) can be added by subclassing
 
 from cadenza.inference.base import InferenceOrchestrator
 from cadenza.inference.sequential import Sequential
+from cadenza.inference.chain_of_thought import ChainOfThought
 
 __all__ = [
     "InferenceOrchestrator",
     "Sequential",
+    "ChainOfThought",
 ]

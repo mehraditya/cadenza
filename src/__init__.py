@@ -41,7 +41,7 @@ from cadenza.stack.adapters.base import (
 from cadenza.stack.modalities.base import Modality, ModalityResult
 
 # VLA orchestration strategies (Sequential is the only one shipped today).
-from cadenza.inference import InferenceOrchestrator, Sequential
+from cadenza.inference import InferenceOrchestrator, Sequential, ChainOfThought
 
 
 def go1(**kwargs) -> Go1:
