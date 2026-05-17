@@ -111,6 +111,7 @@ class ChainOfThought(InferenceOrchestrator):
 
     def setup(self, robot_name: str, sim: Any, lib: Any) -> None:
         self._robot_name = robot_name
+        self._lib = lib
 
         if self.model is None:
             try:
@@ -121,20 +122,9 @@ class ChainOfThought(InferenceOrchestrator):
                     "ChainOfThought needs a `model=` (WorldModelAdapter). "
                     "Default `ai_models.go1.VLA` could not be imported."
                 ) from e
-        if not getattr(self.model, "is_loaded", False):
-            self.model.load()
-
-        for m in self.sense:
-            m.setup()
 
         from cadenza.stack.vocabulary import build_vocabulary
         self._vocab = build_vocabulary(robot_name, library=lib)
-
-        # One worker — pipeline is 1-deep so the bg thread is never racing
-        # with itself, and `future.result()` is the only sync point.
-        self._pool = _futures.ThreadPoolExecutor(
-            max_workers=1, thread_name_prefix="cot-infer",
-        )
 
         # Camera renderer reused across ticks (cheap once built).
         try:
@@ -142,6 +132,51 @@ class ChainOfThought(InferenceOrchestrator):
             self._renderer = mujoco.Renderer(sim.model, 224, 224)
         except Exception:
             self._renderer = None
+
+        # ── EAGER MODEL LOADING ─────────────────────────────────────────────
+        # Every model is fully resident before the robot moves. No lazy
+        # initialisation during the action loop.
+        print(f"  [ChainOfThought] warming up models …")
+
+        # 1. The world-model adapter itself (SmolVLA weights, etc.).
+        if not getattr(self.model, "is_loaded", False):
+            self.model.load()
+
+        # 2. Modalities — each one's setup() pulls its own weights.
+        for m in self.sense:
+            m.setup()
+
+        # 3. Sub-models the adapter would otherwise lazy-load mid-run.
+        #    `ai_models.go1.VLA` keeps a VisionNavigator (DepthAnything +
+        #    SmolVLM) behind `_ensure_navigator()` that only initialises
+        #    when stuck-recovery first fires — we force it now.
+        ensure_nav = getattr(self.model, "_ensure_navigator", None)
+        if callable(ensure_nav):
+            try:
+                navigator = ensure_nav()
+                if navigator is not None and hasattr(navigator, "load"):
+                    navigator.load()
+            except Exception as e:
+                print(f"  [ChainOfThought] navigator preload skipped: {e}")
+
+        # 4. One bootstrap inference + a render pass. Triggers any other
+        #    one-shot initialisation in PyTorch / MuJoCo / model graphs so
+        #    the first tick of the live loop pays no warm-up cost either.
+        try:
+            self._infer(self._observe(sim))
+        except Exception as e:
+            print(f"  [ChainOfThought] warm-up inference skipped: {e}")
+        print(f"  [ChainOfThought] models ready — starting motion")
+
+        # ── Concurrency + persistent gait state ────────────────────────────
+        self._pool = _futures.ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="cot-infer",
+        )
+        # Single gait engine spans the whole run; replaced ONLY when the
+        # model picks a different gait kind. Same-gait chunks just pump it
+        # for more steps → no per-chunk blend ramp → no jitter.
+        self._gait_engine: Any = None
+        self._current_gait_name: str | None = None
 
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -164,6 +199,8 @@ class ChainOfThought(InferenceOrchestrator):
             except Exception:
                 pass
             self._renderer = None
+        self._gait_engine = None
+        self._current_gait_name = None
         if self._log_file is not None:
             try:
                 self._emit("session_end")
@@ -355,20 +392,94 @@ class ChainOfThought(InferenceOrchestrator):
         )
 
     def _drive_action(self, action, sim, lib, viewer, robot) -> None:
-        """Translate a ``ProposedAction`` into a robot ``Step`` and execute."""
-        from cadenza.go1 import Step
-        params = action.params or {}
-        step = Step(
-            name=action.name,
-            speed=float(params.get("speed", 1.0)),
-            extension=float(params.get("extension", 1.0)),
-            repeat=int(params.get("repeat", 1)),
-            distance_m=float(params.get("distance_m", 0.0)),
-            rotation_rad=float(params.get("rotation_rad", 0.0)),
-        )
-        robot._execute_single(step, sim, lib, viewer)
+        """Run one chunk's worth of motion.
+
+        Gait actions (walk/turn/side_step) are pumped through a *persistent*
+        ``GaitEngine`` so consecutive same-gait chunks join seamlessly —
+        no per-chunk re-blend, no jitter. Phase actions (sit, jump,
+        climb_step) keep going through ``robot._execute_single`` since
+        they're one-shot motions, not steady-state gaits.
+        """
+        spec = lib.get(action.name)
+        if spec.is_gait:
+            self._pump_gait_chunk(action, spec, sim, viewer)
+        else:
+            from cadenza.go1 import Step
+            params = action.params or {}
+            step = Step(
+                name=action.name,
+                speed=float(params.get("speed", 1.0)),
+                extension=float(params.get("extension", 1.0)),
+                repeat=int(params.get("repeat", 1)),
+                distance_m=float(params.get("distance_m", 0.0)),
+                rotation_rad=float(params.get("rotation_rad", 0.0)),
+            )
+            robot._execute_single(step, sim, lib, viewer)
+            # Phase action ends in a different pose; drop persistent gait so
+            # the next gait chunk re-initialises cleanly.
+            self._gait_engine = None
+            self._current_gait_name = None
+
         viewer.cam.lookat[:] = sim.data.qpos[0:3]
         viewer.cam.lookat[2] = max(float(sim.data.qpos[2]) * 0.8, 0.15)
+
+    # ── Persistent gait pump ─────────────────────────────────────────────────
+
+    def _pump_gait_chunk(self, action, spec, sim, viewer) -> None:
+        """Run one chunk of a gait by stepping a persistent ``GaitEngine``.
+
+        Skips ``_run_gait``'s blend ramp on continuations — that ramp is what
+        causes the visible jitter when actions are chunked.
+        """
+        import time
+        from cadenza.locomotion.gait_engine import GaitEngine
+        from cadenza.sim import _rpy
+
+        _HZ = 50.0
+        gait = spec.gait
+
+        # Rebuild only when the gait kind genuinely changes (walk → trot, etc.).
+        if self._gait_engine is None or self._current_gait_name != gait.gait_name:
+            self._gait_engine = GaitEngine(
+                sim.spec, gait_name=gait.gait_name, body_height=gait.body_height,
+            )
+            self._current_gait_name = gait.gait_name
+
+        params = action.params or {}
+        speed_scale = float(params.get("speed", 1.0))
+        speed = float(spec.speed_ms) * speed_scale if spec.speed_ms > 0 else 0.5
+
+        distance = float(params.get("distance_m", 0.0) or 0.0)
+        rotation = float(params.get("rotation_rad", 0.0) or 0.0)
+        if distance > 0:
+            duration = distance / max(speed, 0.05)
+        elif rotation > 0:
+            yaw_speed = max(abs(gait.cmd_yaw) * speed_scale, 0.2)
+            duration = rotation / yaw_speed
+        else:
+            duration = self.chunk_distance_m / max(speed, 0.05)
+
+        n_steps = max(1, int(duration * _HZ))
+        cmd = np.array([
+            gait.cmd_vx * speed_scale,
+            gait.cmd_vy * speed_scale,
+            gait.cmd_yaw * speed_scale,
+        ], dtype=np.float32)
+
+        dt = 1.0 / _HZ
+        t0 = time.monotonic()
+        for s in range(n_steps):
+            if not viewer.is_running():
+                return
+            rpy = _rpy(sim.data.qpos[3:7])
+            q_gait = self._gait_engine.step(dt, cmd, rpy)
+            sim.data.ctrl[:] = q_gait
+            for _ in range(sim._phys):
+                sim._step()
+            viewer.sync()
+            wait = t0 + (s + 1) / _HZ - time.monotonic()
+            if wait > 0:
+                time.sleep(wait)
 
     # ── JSONL logging ────────────────────────────────────────────────────────
 
