@@ -1,0 +1,146 @@
+<mujoco model="go1">
+  
+
+  <compiler angle="radian" autolimits="true" />
+  <option gravity="0 0 -9.81" timestep="0.002" iterations="50" tolerance="1e-10" cone="elliptic" impratio="100" />
+
+  <default>
+    
+    <joint damping="2.0" frictionloss="0.2" armature="0.01" />
+    <geom contype="1" conaffinity="1" condim="3" friction="0.6 0.02 0.001" solref="0.005 1" solimp="0.98 0.99 0.001" />
+    <position kp="300" ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-33.5 33.5" />
+
+    
+    <default class="hip_joint">
+      <joint damping="1.0" frictionloss="0.2" armature="0.01" />
+    </default>
+
+    
+    <default class="foot">
+      <geom condim="6" friction="0.8 0.02 0.01" solimp="0.015 1 0.023" solref="0.005 1" />
+    </default>
+  </default>
+
+  <asset>
+    
+    <texture name="sky" type="skybox" builtin="gradient" rgb1="0.45 0.60 0.85" rgb2="0.75 0.85 0.95" width="512" height="512" mark="random" markrgb="1 1 1" random="0.01" />
+    
+    <texture name="ground_tex" type="2d" builtin="flat" rgb1="0.72 0.70 0.66" rgb2="0.68 0.66 0.62" width="512" height="512" mark="random" markrgb="0.65 0.63 0.60" random="0.05" />
+    <material name="floor_mat" texture="ground_tex" texrepeat="12 12" texuniform="true" reflectance="0.02" rgba="0.75 0.73 0.70 1" />
+    <material name="body_mat" rgba="0.15 0.15 0.18 1" reflectance="0.05" />
+    <material name="leg_mat" rgba="0.12 0.12 0.15 1" reflectance="0.03" />
+  </asset>
+
+  <worldbody>
+    <light name="sun" pos="5 3 12" dir="-0.3 -0.2 -1" diffuse="1.2 1.15 1.0" specular="0.5 0.5 0.4" castshadow="true" />
+    <light name="ambient" pos="0 0 10" dir="0 0 -1" diffuse="0.35 0.38 0.45" specular="0 0 0" castshadow="false" />
+    <light name="fill" pos="-5 -3 6" dir="0.3 0.2 -1" diffuse="0.25 0.25 0.30" castshadow="false" />
+
+    
+    <geom name="floor" type="plane" size="30 30 0.1" material="floor_mat" condim="6" friction="0.8 0.02 0.01" />
+
+    
+    <geom name="fwd_arrow_shaft" type="box" size="0.4 0.02 0.003" pos="-0.6 0 0.003" rgba="0.1 0.85 0.3 0.8" contype="0" conaffinity="0" />
+    <geom name="fwd_arrow_head" type="box" size="0.06 0.06 0.003" pos="-1.05 0 0.003" euler="0 0 0.785" rgba="0.1 0.85 0.3 0.8" contype="0" conaffinity="0" />
+
+
+    
+    <body name="trunk" pos="0 0 0.27">
+      <freejoint name="root" />
+      <geom name="trunk" type="box" size="0.1881 0.0475 0.048" mass="9.041" material="body_mat" />
+      <site name="imu" pos="0 0 0" size="0.005" />
+      
+      <geom name="head_marker" type="sphere" size="0.03" pos="-0.22 0 0.04" rgba="0.1 0.95 0.3 1" contype="0" conaffinity="0" mass="0.001" />
+
+      
+      <body name="FL_hip" pos="0.1881 0.0472 0">
+        <joint name="FL_hip_joint" type="hinge" axis="1 0 0" range="-0.863 0.863" class="hip_joint" />
+        <geom type="capsule" size="0.044 0.020" pos="0 0.040 0" euler="1.5708 0 0" mass="0.591" material="body_mat" />
+        <body name="FL_thigh" pos="0 0.0838 0">
+          <joint name="FL_thigh_joint" type="hinge" axis="0 -1 0" range="-0.686 4.501" />
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.213" mass="0.921" material="leg_mat" rgba="0.30 0.55 0.90 1" />
+          <body name="FL_calf" pos="0 0 -0.213">
+            <joint name="FL_calf_joint" type="hinge" axis="0 -1 0" range="-2.818 -0.888" />
+            <geom type="capsule" size="0.019" fromto="0 0 0 0 0 -0.213" mass="0.135" material="leg_mat" />
+            <body name="FL_foot" pos="0 0 -0.213">
+              <geom name="FL_foot_geom" type="sphere" size="0.0165" mass="0.06" rgba="0.30 0.55 0.90 1" class="foot" />
+            </body>
+          </body>
+        </body>
+      </body>
+
+      
+      <body name="FR_hip" pos="0.1881 -0.0472 0">
+        <joint name="FR_hip_joint" type="hinge" axis="-1 0 0" range="-0.863 0.863" class="hip_joint" />
+        <geom type="capsule" size="0.044 0.020" pos="0 -0.040 0" euler="1.5708 0 0" mass="0.591" material="body_mat" />
+        <body name="FR_thigh" pos="0 -0.0838 0">
+          <joint name="FR_thigh_joint" type="hinge" axis="0 -1 0" range="-0.686 4.501" />
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.213" mass="0.921" material="leg_mat" rgba="0.90 0.33 0.33 1" />
+          <body name="FR_calf" pos="0 0 -0.213">
+            <joint name="FR_calf_joint" type="hinge" axis="0 -1 0" range="-2.818 -0.888" />
+            <geom type="capsule" size="0.019" fromto="0 0 0 0 0 -0.213" mass="0.135" material="leg_mat" />
+            <body name="FR_foot" pos="0 0 -0.213">
+              <geom name="FR_foot_geom" type="sphere" size="0.0165" mass="0.06" rgba="0.90 0.33 0.33 1" class="foot" />
+            </body>
+          </body>
+        </body>
+      </body>
+
+      
+      <body name="RL_hip" pos="-0.1881 0.0472 0">
+        <joint name="RL_hip_joint" type="hinge" axis="1 0 0" range="-0.863 0.863" class="hip_joint" />
+        <geom type="capsule" size="0.044 0.020" pos="0 0.040 0" euler="1.5708 0 0" mass="0.591" material="body_mat" />
+        <body name="RL_thigh" pos="0 0.0838 0">
+          <joint name="RL_thigh_joint" type="hinge" axis="0 -1 0" range="-0.686 4.501" />
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.213" mass="0.921" material="leg_mat" rgba="0.30 0.90 0.75 1" />
+          <body name="RL_calf" pos="0 0 -0.213">
+            <joint name="RL_calf_joint" type="hinge" axis="0 -1 0" range="-2.818 -0.888" />
+            <geom type="capsule" size="0.019" fromto="0 0 0 0 0 -0.213" mass="0.135" material="leg_mat" />
+            <body name="RL_foot" pos="0 0 -0.213">
+              <geom name="RL_foot_geom" type="sphere" size="0.0165" mass="0.06" rgba="0.30 0.90 0.75 1" class="foot" />
+            </body>
+          </body>
+        </body>
+      </body>
+
+      
+      <body name="RR_hip" pos="-0.1881 -0.0472 0">
+        <joint name="RR_hip_joint" type="hinge" axis="-1 0 0" range="-0.863 0.863" class="hip_joint" />
+        <geom type="capsule" size="0.044 0.020" pos="0 -0.040 0" euler="1.5708 0 0" mass="0.591" material="body_mat" />
+        <body name="RR_thigh" pos="0 -0.0838 0">
+          <joint name="RR_thigh_joint" type="hinge" axis="0 -1 0" range="-0.686 4.501" />
+          <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.213" mass="0.921" material="leg_mat" rgba="0.90 0.65 0.30 1" />
+          <body name="RR_calf" pos="0 0 -0.213">
+            <joint name="RR_calf_joint" type="hinge" axis="0 -1 0" range="-2.818 -0.888" />
+            <geom type="capsule" size="0.019" fromto="0 0 0 0 0 -0.213" mass="0.135" material="leg_mat" />
+            <body name="RR_foot" pos="0 0 -0.213">
+              <geom name="RR_foot_geom" type="sphere" size="0.0165" mass="0.06" rgba="0.90 0.65 0.30 1" class="foot" />
+            </body>
+          </body>
+        </body>
+      </body>
+
+    </body>
+  <geom name="cadenza_obs_0" type="box" size="1 1.2 0.05" rgba="0.55 0.55 0.58 1" pos="-5.45679 0 0.295036" axisangle="0 1 0 0.349066" /><geom name="cadenza_obs_1" type="box" size="1 1.2 0.05" rgba="0.55 0.55 0.58 1" pos="-8.07741 0 0.389005" axisangle="0 1 0 2.79253" /><geom name="cadenza_obs_2" type="sphere" size="0.2" rgba="0.22 0.3 0.22 1" pos="-6.75 0 0" /><geom name="cadenza_obs_3" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-4.57518 0.8 0.0962123" /><geom name="cadenza_obs_4" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-4.82218 -0.8 0.186115" /><geom name="cadenza_obs_5" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-5.06919 0.8 0.276017" /><geom name="cadenza_obs_6" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-5.31619 -0.8 0.36592" /><geom name="cadenza_obs_7" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-5.5632 0.8 0.455822" /><geom name="cadenza_obs_8" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-5.8102 -0.8 0.545724" /><geom name="cadenza_obs_9" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-6.0572 0.8 0.635627" /><geom name="cadenza_obs_10" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-6.30421 -0.8 0.725529" /><geom name="cadenza_obs_11" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-8.92482 -0.8 -0.0314891" /><geom name="cadenza_obs_12" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-8.67782 0.8 0.0584134" /><geom name="cadenza_obs_13" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-8.43081 -0.8 0.148316" /><geom name="cadenza_obs_14" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-8.18381 0.8 0.238218" /><geom name="cadenza_obs_15" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-7.9368 -0.8 0.328121" /><geom name="cadenza_obs_16" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-7.6898 0.8 0.418023" /><geom name="cadenza_obs_17" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-7.4428 -0.8 0.507926" /><geom name="cadenza_obs_18" type="box" size="0.06 0.06 0.06" rgba="0.85 0.3 0.2 1" pos="-7.19579 0.8 0.597828" /><geom name="cadenza_obs_19" type="box" size="0.132075 0.132075 0.127244" rgba="0.72 0.3 0.22 1" pos="-7.38084 -1.3966 0.127244" /><geom name="cadenza_obs_20" type="box" size="0.0846399 0.0846399 0.170744" rgba="0.72 0.3 0.22 1" pos="-6.32059 -0.537244 0.170744" /><geom name="cadenza_obs_21" type="box" size="0.0855884 0.0855884 0.129071" rgba="0.72 0.3 0.22 1" pos="-8.81252 -0.265417 0.129071" /><geom name="cadenza_obs_22" type="box" size="0.0899042 0.0899042 0.142324" rgba="0.72 0.3 0.22 1" pos="-6.8774 1.30741 0.142324" /><geom name="cadenza_obs_23" type="box" size="0.126168 0.126168 0.159668" rgba="0.72 0.3 0.22 1" pos="-5.86283 1.79084 0.159668" /><geom name="cadenza_obs_24" type="box" size="0.148677 0.148677 0.148961" rgba="0.72 0.3 0.22 1" pos="-4.11872 -1.81367 0.148961" /><geom name="cadenza_obs_25" type="box" size="0.104679 0.104679 0.201613" rgba="0.72 0.3 0.22 1" pos="-8.27872 -1.52883 0.201613" /><geom name="cadenza_obs_26" type="box" size="0.131113 0.131113 0.15724" rgba="0.72 0.3 0.22 1" pos="-8.09637 0.326401 0.15724" /><geom name="cadenza_obs_27" type="box" size="0.0847681 0.0847681 0.140596" rgba="0.72 0.3 0.22 1" pos="-6.26128 -1.74884 0.140596" /><geom name="cadenza_obs_28" type="box" size="0.105132 0.105132 0.178556" rgba="0.72 0.3 0.22 1" pos="-5.598 -0.289631 0.178556" /><geom name="cadenza_obs_29" type="box" size="0.125954 0.125954 0.17252" rgba="0.72 0.3 0.22 1" pos="-5.50503 -1.02361 0.17252" /><geom name="cadenza_obs_30" type="box" size="0.103035 0.103035 0.218017" rgba="0.72 0.3 0.22 1" pos="-4.62431 0.917781 0.218017" /><geom name="cadenza_obs_31" type="box" size="0.125842 0.125842 0.207548" rgba="0.72 0.3 0.22 1" pos="-5.65892 1.05828 0.207548" /><geom name="cadenza_obs_32" type="box" size="0.12755 0.12755 0.17799" rgba="0.72 0.3 0.22 1" pos="-7.43126 0.781181 0.17799" /><geom name="cadenza_obs_33" type="box" size="0.0848536 0.0848536 0.190149" rgba="0.72 0.3 0.22 1" pos="-6.62951 0.656609 0.190149" /><geom name="cadenza_obs_34" type="box" size="0.133492 0.133492 0.122256" rgba="0.72 0.3 0.22 1" pos="-7.57702 -0.456834 0.122256" /><geom name="cadenza_obs_35" type="box" size="0.0893677 0.0893677 0.125895" rgba="0.72 0.3 0.22 1" pos="-6.69152 -1.32781 0.125895" /><geom name="cadenza_obs_36" type="box" size="0.0998092 0.0998092 0.159095" rgba="0.72 0.3 0.22 1" pos="-5.15884 -1.48264 0.159095" /><geom name="cadenza_obs_37" type="box" size="0.113224 0.113224 0.155877" rgba="0.72 0.3 0.22 1" pos="-4.68008 -0.886316 0.155877" /><geom name="cadenza_obs_38" type="box" size="0.0920737 0.0920737 0.137622" rgba="0.72 0.3 0.22 1" pos="-4.57904 1.83092 0.137622" /><geom name="cadenza_obs_39" type="box" size="0.118797 0.118797 0.178912" rgba="0.72 0.3 0.22 1" pos="-7.84022 -1.06666 0.178912" /><geom name="cadenza_obs_40" type="box" size="0.113516 0.113516 0.156925" rgba="0.72 0.3 0.22 1" pos="-7.68627 -1.98363 0.156925" /><geom name="cadenza_obs_41" type="box" size="0.142398 0.142398 0.207451" rgba="0.72 0.3 0.22 1" pos="-8.73004 1.59813 0.207451" /><geom name="cadenza_obs_42" type="box" size="0.111918 0.111918 0.130354" rgba="0.72 0.3 0.22 1" pos="-5.01063 -0.430484 0.130354" /><geom name="cadenza_obs_43" type="box" size="0.0921012 0.0921012 0.130146" rgba="0.72 0.3 0.22 1" pos="-8.73712 -1.99907 0.130146" /><geom name="cadenza_obs_44" type="box" size="0.106373 0.106373 0.142304" rgba="0.72 0.3 0.22 1" pos="-6.33704 1.11622 0.142304" /><geom name="cadenza_obs_45" type="box" size="0.097637 0.097637 0.142685" rgba="0.72 0.3 0.22 1" pos="-4.225 -0.541456 0.142685" /><geom name="cadenza_obs_46" type="box" size="0.108033 0.108033 0.174866" rgba="0.72 0.3 0.22 1" pos="-4.09847 0.629073 0.174866" /><geom name="cadenza_obs_47" type="box" size="0.121881 0.121881 0.12187" rgba="0.72 0.3 0.22 1" pos="-6.49176 0.1273 0.12187" /><geom name="cadenza_obs_48" type="box" size="0.106079 0.106079 0.171835" rgba="0.72 0.3 0.22 1" pos="-5.37403 0.225902 0.171835" /></worldbody>
+
+  <actuator>
+    
+    <position name="FL_hip" joint="FL_hip_joint" ctrlrange="-0.80 0.80" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="FL_thigh" joint="FL_thigh_joint" ctrlrange="-0.50 2.50" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="FL_calf" joint="FL_calf_joint" ctrlrange="-2.75 -0.60" forcelimited="true" forcerange="-35.55 35.55" />
+    <position name="FR_hip" joint="FR_hip_joint" ctrlrange="-0.80 0.80" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="FR_thigh" joint="FR_thigh_joint" ctrlrange="-0.50 2.50" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="FR_calf" joint="FR_calf_joint" ctrlrange="-2.75 -0.60" forcelimited="true" forcerange="-35.55 35.55" />
+    <position name="RL_hip" joint="RL_hip_joint" ctrlrange="-0.80 0.80" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="RL_thigh" joint="RL_thigh_joint" ctrlrange="-0.50 2.50" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="RL_calf" joint="RL_calf_joint" ctrlrange="-2.75 -0.60" forcelimited="true" forcerange="-35.55 35.55" />
+    <position name="RR_hip" joint="RR_hip_joint" ctrlrange="-0.80 0.80" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="RR_thigh" joint="RR_thigh_joint" ctrlrange="-0.50 2.50" forcelimited="true" forcerange="-23.7 23.7" />
+    <position name="RR_calf" joint="RR_calf_joint" ctrlrange="-2.75 -0.60" forcelimited="true" forcerange="-35.55 35.55" />
+  </actuator>
+
+  <keyframe>
+    <key name="home" qpos="0 0 0.27 1 0 0 0                            0 0.9 -1.8  0 0.9 -1.8                            0 0.9 -1.8  0 0.9 -1.8" />
+  </keyframe>
+
+</mujoco>
