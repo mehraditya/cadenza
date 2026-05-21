@@ -85,8 +85,12 @@ class Sequential(InferenceOrchestrator):
 
     def setup(self, robot_name: str, sim: Any, lib: Any) -> None:
         self._robot_name = robot_name
+        self._stream_emit("setup_start", robot=robot_name,
+                          retries=self.retries)
         self._guardian = self._build_guardian(robot_name)
         self._guardian.load()
+        self._stream_emit("setup_done",
+                          guardian=type(self._guardian).__name__)
 
         if self._log_path is not None:
             self._log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,6 +176,8 @@ class Sequential(InferenceOrchestrator):
         current = step
         retry_count = 0
         self._emit("step_start", step=self._step_payload(step))
+        self._stream_emit("step_start", action=step.name,
+                          distance_m=getattr(step, "distance_m", 0.0))
 
         while True:
             if not viewer.is_running():
@@ -183,6 +189,7 @@ class Sequential(InferenceOrchestrator):
 
             if result is None or not getattr(result, "detected", False):
                 self._emit("step_complete", step=self._step_payload(current))
+                self._stream_emit("step_complete", action=current.name)
                 return
 
             # Interruption: figure out how much of the action was completed.
@@ -202,6 +209,11 @@ class Sequential(InferenceOrchestrator):
                 distance_left=distance_left,
                 step=self._step_payload(current),
             )
+            self._stream_emit("detect",
+                              attempt=retry_count + 1,
+                              position=getattr(result, "position", None),
+                              size=getattr(result, "size", None),
+                              remaining_m=distance_left)
 
             print(f"\n  [Sequential] VLA INTERRUPT: obstacle {result.position} "
                   f"({result.size})")
@@ -218,6 +230,9 @@ class Sequential(InferenceOrchestrator):
                     distance_left=distance_left,
                     step=self._step_payload(current),
                 )
+                self._stream_emit("retries_exceeded",
+                                  attempts=retry_count + 1,
+                                  abandoning=current.name)
                 print(f"\n  [Sequential] retries exhausted ({self.retries}); "
                       f"abandoning {current.name}\n")
                 return
@@ -229,12 +244,18 @@ class Sequential(InferenceOrchestrator):
                 attempt=retry_count + 1,
                 steps=[self._step_payload(s) for s in avoidance],
             )
+            self._stream_emit("avoid_start",
+                              attempt=retry_count + 1,
+                              n_steps=len(avoidance),
+                              plan=[s.name for s in avoidance])
             if avoidance:
                 print(f"               Avoidance: {[s.name for s in avoidance]}\n")
                 for av_step in avoidance:
                     if not viewer.is_running():
                         return
                     self._emit("avoid_step", step=self._step_payload(av_step))
+                    self._stream_emit("avoid_step",
+                                      step=self._step_payload(av_step))
                     print(f"    >> {av_step.name}", end="")
                     if getattr(av_step, "distance_m", 0) > 0:
                         print(f"  {av_step.distance_m:.1f}m", end="")
@@ -255,6 +276,10 @@ class Sequential(InferenceOrchestrator):
                     distance_left=distance_left,
                     step=self._step_payload(current),
                 )
+                self._stream_emit("resume",
+                                  attempt=retry_count,
+                                  action=current.name,
+                                  remaining_m=distance_left)
                 print(f"\n  [Sequential] RESUME: {current.name} "
                       f"{distance_left:.1f}m remaining\n")
                 continue

@@ -19,6 +19,10 @@ from cadenza.inference.base import InferenceOrchestrator
 from cadenza.inference.sequential import Sequential
 from cadenza.inference.chain_of_thought import ChainOfThought
 
+# ``Stream`` is internal plumbing used when ``streaming=True`` is passed to
+# ``robot.run(...)``. Not re-exported — it isn't a new orchestration kind.
+from cadenza.inference.stream import Stream as _Stream  # noqa: F401
+
 __all__ = [
     "InferenceOrchestrator",
     "Sequential",

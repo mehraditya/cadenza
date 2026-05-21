@@ -167,6 +167,10 @@ class ChainOfThought(InferenceOrchestrator):
         except Exception as e:
             print(f"  [ChainOfThought] warm-up inference skipped: {e}")
         print(f"  [ChainOfThought] models ready — starting motion")
+        self._stream_emit("models_ready",
+                          model=type(self.model).__name__,
+                          modalities=[type(m).__name__ for m in self.sense],
+                          target=self.target)
 
         # ── Concurrency + persistent gait state ────────────────────────────
         self._pool = _futures.ThreadPoolExecutor(
@@ -227,8 +231,11 @@ class ChainOfThought(InferenceOrchestrator):
         reply = self._infer(self._observe(sim))
         if not reply.actions:
             self._emit("done", reason="bootstrap_returned_no_action")
+            self._stream_emit("done", reason="bootstrap_returned_no_action")
             return
         current = self._chunk_action(reply.actions[0])
+        self._stream_emit("bootstrap", action=current.name,
+                          params=current.params)
 
         in_flight = None         # next-action inference future, or None
         final_pending = False    # set when model emits done=True
@@ -250,10 +257,16 @@ class ChainOfThought(InferenceOrchestrator):
             self._emit("execute_start", tick=tick, action=current.name,
                        params=current.params, rationale=current.rationale,
                        repeat=repeat_count)
+            self._stream_emit("execute_start", tick=tick,
+                              action=current.name,
+                              dist=current.params.get("distance_m"),
+                              rot=current.params.get("rotation_rad"),
+                              repeat=repeat_count)
             self._drive_action(current, sim, lib, viewer, robot)
             exec_elapsed = round(time.time() - t0, 3)
             self._emit("execute_done", tick=tick, action=current.name,
                        elapsed_s=exec_elapsed)
+            self._stream_emit("execute_done", tick=tick, elapsed_s=exec_elapsed)
 
             # Arrival predicate — cheap, runs in main.
             if self.target is not None:
@@ -263,6 +276,8 @@ class ChainOfThought(InferenceOrchestrator):
                     if in_flight is not None:
                         in_flight.cancel()
                     self._emit("target_reached", tick=tick, distance_m=dist)
+                    self._stream_emit("target_reached", tick=tick,
+                                      distance_m=dist)
                     done_reason = "target_reached"
                     break
 
@@ -285,6 +300,9 @@ class ChainOfThought(InferenceOrchestrator):
                                action=new_action.name,
                                params=new_action.params,
                                wait_s=0.0)
+                    self._stream_emit("infer_picked", tick=tick,
+                                      action=new_action.name,
+                                      rationale=new_action.rationale or "")
                     # Same action? keep repeat counter; different? reset.
                     if (new_action.name == current.name
                             and new_action.params == current.params):
@@ -300,6 +318,9 @@ class ChainOfThought(InferenceOrchestrator):
                 self._emit("infer_pending", tick=tick,
                            repeating=current.name,
                            repeat=repeat_count)
+                self._stream_emit("infer_pending", tick=tick,
+                                  repeating=current.name,
+                                  repeat=repeat_count)
 
         if done_reason is None:
             done_reason = "max_steps_reached"
@@ -370,6 +391,10 @@ class ChainOfThought(InferenceOrchestrator):
         d = obs.to_dict()
         if self.target is not None:
             d["target_xy"] = self.target
+        # When streaming is on, hand the channel to the model so it can
+        # narrate ("I see a box on the left, going right") via .say().
+        if self._stream is not None:
+            d["stream"] = self._stream
 
         for m in self.sense:
             try:

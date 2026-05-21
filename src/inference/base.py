@@ -27,6 +27,21 @@ class InferenceOrchestrator(ABC):
     # Human-readable name shown in run logs.
     name: str = "base"
 
+    # Streaming sink set by the robot controller when ``run(streaming=True)``.
+    # ``None`` ⇒ streaming is off. Orchestrators emit via the two helpers
+    # below which no-op when this is None.
+    _stream: Any = None
+
+    def _stream_emit(self, event: str, **details: Any) -> None:
+        s = getattr(self, "_stream", None)
+        if s is not None:
+            s.emit(event, **details)
+
+    def _stream_say(self, message: str) -> None:
+        s = getattr(self, "_stream", None)
+        if s is not None:
+            s.say(message)
+
     # ── Lifecycle ────────────────────────────────────────────────────────────
 
     def setup(self, robot_name: str, sim: Any, lib: Any) -> None:

@@ -237,7 +237,8 @@ class Go1:
             model=None, sense=None,
             max_iterations: int = 250,
             headless: bool = False,
-            verbose: bool = True):
+            verbose: bool = True,
+            streaming: bool = False):
         """Execute a sequence of actions, or drive a goal with a world model.
 
         Two shapes:
@@ -264,6 +265,11 @@ class Go1:
             on: Execution target. ``None`` = local sim. (SSH/DDS/bridge later.)
             model: Override the model attached via ``setup``.
             sense: Override the modalities attached via ``setup``.
+            streaming: when True, the active inference orchestrator gets a
+                ``Stream`` channel and prints every lifecycle event live to
+                stdout. The same channel is forwarded to the world-model
+                adapter via ``observation["stream"]`` so the model can call
+                ``stream.say("...")`` to narrate directly into the terminal.
 
         VLA orchestration is configured at construction via
         ``cadenza.go1(inference=Sequential())``.
@@ -290,6 +296,13 @@ class Go1:
         # if any. Without one, actions execute open-loop with no model.
         inference = self._inference
         if inference is not None:
+            if streaming:
+                from cadenza.inference.stream import Stream
+                inference._stream = Stream(
+                    prefix=inference.name or type(inference).__name__,
+                )
+            else:
+                inference._stream = None
             inference.setup("go1", sim, lib)
 
         infer_label = (
@@ -342,6 +355,7 @@ class Go1:
         finally:
             if inference is not None:
                 inference.teardown()
+                inference._stream = None
 
     # ── Goal-driven (world-model loop) ────────────────────────────────────────
 
