@@ -126,12 +126,20 @@ class ChainOfThought(InferenceOrchestrator):
         from cadenza.stack.vocabulary import build_vocabulary
         self._vocab = build_vocabulary(robot_name, library=lib)
 
-        # Camera renderer reused across ticks (cheap once built).
+        # Camera renderer + a separate depth renderer (cheap once built).
+        # The depth renderer is the input to SpatialMemory's visual-only map.
         try:
             import mujoco
             self._renderer = mujoco.Renderer(sim.model, 224, 224)
+            self._depth_renderer = mujoco.Renderer(sim.model, 224, 224)
+            try:
+                self._depth_renderer.enable_depth_rendering()
+            except AttributeError:
+                # Older MuJoCo builds — fall back to no depth.
+                self._depth_renderer = None
         except Exception:
             self._renderer = None
+            self._depth_renderer = None
 
         # ── EAGER MODEL LOADING ─────────────────────────────────────────────
         # Every model is fully resident before the robot moves. No lazy
@@ -203,6 +211,12 @@ class ChainOfThought(InferenceOrchestrator):
             except Exception:
                 pass
             self._renderer = None
+        if getattr(self, "_depth_renderer", None) is not None:
+            try:
+                self._depth_renderer.close()
+            except Exception:
+                pass
+            self._depth_renderer = None
         self._gait_engine = None
         self._current_gait_name = None
         if self._log_file is not None:
@@ -365,6 +379,7 @@ class ChainOfThought(InferenceOrchestrator):
         state = sim.get_state()
 
         camera = None
+        depth = None
         if self._renderer is not None:
             try:
                 self._renderer.update_scene(sim.data, camera="forward")
@@ -375,6 +390,16 @@ class ChainOfThought(InferenceOrchestrator):
                     camera = self._renderer.render()
                 except Exception:
                     camera = None
+        if getattr(self, "_depth_renderer", None) is not None:
+            try:
+                self._depth_renderer.update_scene(sim.data, camera="forward")
+                depth = self._depth_renderer.render()
+            except Exception:
+                try:
+                    self._depth_renderer.update_scene(sim.data)
+                    depth = self._depth_renderer.render()
+                except Exception:
+                    depth = None
 
         obs = Observation(
             pos=np.asarray(state["pos"], dtype=np.float32),
@@ -387,6 +412,7 @@ class ChainOfThought(InferenceOrchestrator):
             terrain_ahead=state.get("terrain_ahead", {}),
             obstacles_ahead=state.get("obstacles_ahead", {}),
             camera=camera,
+            depth=depth,
         )
         d = obs.to_dict()
         if self.target is not None:
@@ -400,6 +426,12 @@ class ChainOfThought(InferenceOrchestrator):
             try:
                 res = m.compute(obs)
                 d.update(res.keys)
+                # Modalities surface a non-empty ``summary`` only on
+                # meaningful change (e.g. SpatialMemory just acquired a
+                # landmark). Forward those to the stream — quiet ticks
+                # produce no output.
+                if res.summary:
+                    self._stream_emit("modality_update", message=res.summary)
             except Exception:
                 continue
         return d

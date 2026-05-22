@@ -36,6 +36,7 @@ class Observation:
     terrain_ahead: dict[str, Any] = field(default_factory=dict)
     obstacles_ahead: dict[str, Any] = field(default_factory=dict)
     camera: np.ndarray | None = None
+    depth: np.ndarray | None = None        # forward-camera depth, meters
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

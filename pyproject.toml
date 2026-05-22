@@ -47,6 +47,7 @@ packages = [
     "cadenza.robots",
     "cadenza.robots.g1",
     "cadenza.robots.go1",
+    "cadenza.spatial",
     "cadenza.stack",
     "cadenza.stack.adapters",
     "cadenza.stack.modalities",

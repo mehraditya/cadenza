@@ -130,6 +130,10 @@ class Stream:
         if event == "step_complete":
             return f"Step complete: {d.get('action')}."
 
+        # Modality-driven memory updates (e.g. SpatialMemory).
+        if event == "modality_update":
+            return d.get("message") or None
+
         # Terminal
         if event == "target_reached":
             d_m = d.get("distance_m")

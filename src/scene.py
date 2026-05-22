@@ -253,6 +253,11 @@ class Scene:
         for i, obj in enumerate(self.objects):
             self._inject(worldbody, obj, i)
 
+        # Make sure the robot has a forward-facing camera so visual modules
+        # (SpatialMemory, depth-based perception, VLM guardians) have an
+        # input no matter which bundled scene we extend.
+        self._ensure_forward_camera(root)
+
         if out_path is None:
             # Legacy behaviour: write next to the base XML so relative
             # asset paths still resolve.
@@ -305,6 +310,34 @@ class Scene:
             f = include.attrib.get("file")
             if f and not Path(f).is_absolute():
                 include.attrib["file"] = str((base_dir / f).resolve())
+
+    # ── Auto camera injection ───────────────────────────────────────────────
+
+    @staticmethod
+    def _ensure_forward_camera(root: ET.Element) -> None:
+        """Inject ``<camera name="forward" ...>`` onto the trunk body if no
+        camera with that name exists anywhere in the scene.
+
+        Pos / euler / FOV match the bundled stairs scene so any visual
+        module that's been calibrated against that camera works unchanged.
+        """
+        # Already defined somewhere?
+        for cam in root.iter("camera"):
+            if cam.attrib.get("name") == "forward":
+                return
+        trunk: ET.Element | None = None
+        for body in root.iter("body"):
+            if body.attrib.get("name") == "trunk":
+                trunk = body
+                break
+        if trunk is None:
+            return  # no trunk → can't usefully attach a robot camera
+        ET.SubElement(trunk, "camera", {
+            "name": "forward",
+            "pos": "-0.22 0 0.06",
+            "euler": "1.5708 -1.5708 0",
+            "fovy": "70",
+        })
 
     # ── Internal injection ──────────────────────────────────────────────────
 
