@@ -22,11 +22,15 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import mujoco, mujoco.viewer
 
 from cadenza.go1 import Step  # reuse the same Step descriptor
+
+# G1 has no bundled scenes of its own yet; fall back to the Go1 library.
+_GO1_LIBRARY_DIR = Path(__file__).resolve().parent / "library" / "go1"
 
 
 class G1:
@@ -136,10 +140,31 @@ class G1:
             target=target,
             world_model=model,
             modalities=sense or [],
-            xml_path=scene if scene else self._xml_path,
+            xml_path=self._resolve_scene(scene),
             max_iterations=max_iterations,
             headless=headless,
             verbose=verbose,
+        )
+
+    def _resolve_scene(self, scene: str | None) -> str | None:
+        """Bundled scene name → XML path. Absolute paths pass through.
+
+        G1 ships no scenes of its own yet, so named scenes resolve against
+        the Go1 library (e.g. "stairs" → src/library/go1/scenes/stairs.xml).
+        """
+        if scene is None:
+            return self._xml_path
+        p = Path(scene)
+        if p.is_absolute() or p.exists():
+            return str(p)
+        bundled = _GO1_LIBRARY_DIR / "scenes" / f"{scene}.xml"
+        if bundled.exists():
+            return str(bundled)
+        legacy = _GO1_LIBRARY_DIR / f"{scene}.xml"
+        if legacy.exists():
+            return str(legacy)
+        raise FileNotFoundError(
+            f"No bundled scene '{scene}' at {bundled} or {legacy}"
         )
 
     def _run_sequence(self, sequence: list):
