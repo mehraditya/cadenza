@@ -354,9 +354,13 @@ class LoRAActionHead(nn.Module):
                     rotation_rad=float(p[4]),
                     duration_s=float(p[5]),
                 ))
+            # Truncated if either (a) input was clipped at max_seq_len, or
+            # (b) we filled every decoded slot without ever emitting STOP.
+            # Both mean: the head ran out of budget, not that it finished.
+            filled_to_budget = not stop_emitted and len(calls) == T
             reports.append(DecodeReport(
                 calls=calls,
-                truncated=was_clipped and not stop_emitted,
+                truncated=(was_clipped or filled_to_budget) and not stop_emitted,
                 stop_emitted=stop_emitted,
                 action_confidence=confs,
             ))
