@@ -1,11 +1,12 @@
 """SmolVLA-based world-model adapter tuned for the G1 humanoid.
 
 G1's action vocabulary is narrower than Go1 (no side_step, climb_step,
-turn primitives in the current library). The previous goal-text -> plan
-path (via ``cadenza.parser.translator.CommandParser``) has been removed;
-``_build_plan`` now raises until a replacement model -> ProposedAction
-interface is designed. SmolVLA inference still runs each tick for
-perception/logging.
+turn primitives in the current library). The goal-text -> plan path now
+runs through :class:`cadenza.parser.lora_action_head.LoRAActionDecoder`,
+a trainable LoRA head whose output is structurally constrained to the
+action library — replacing the regex CommandParser whose silent drops
+caused divergence between intended and executed plans. SmolVLA inference
+still runs each tick for perception/logging.
 """
 
 from __future__ import annotations
@@ -70,12 +71,40 @@ class VLA(WorldModelAdapter):
         return self._episode
 
     def _build_plan(self, goal: str, vocabulary: ActionVocabulary) -> list[ProposedAction]:
-        raise NotImplementedError(
-            "g1.VLA: goal-text plan building has been removed. "
-            "The previous CommandParser-based path silently dropped unparseable "
-            "tokens and out-of-vocabulary actions; a replacement interface "
-            "(model -> ProposedAction directly) needs to be designed."
-        )
+        decoder = self._ensure_lora_decoder(vocabulary)
+        report = decoder.decode_report(goal)
+        if report.truncated:
+            _LOG.warning(
+                "g1.VLA: plan truncated at max_seq_len=%d; raise the head's "
+                "max_seq_len if longer plans are needed.",
+                decoder.head.max_seq_len,
+            )
+        plans: list[ProposedAction] = []
+        for call, conf in zip(report.calls, report.action_confidence):
+            params: dict[str, Any] = {}
+            if call.distance_m > 0:
+                params["distance_m"] = call.distance_m
+            if call.duration_s > 0:
+                params["duration_s"] = call.duration_s
+            plans.append(ProposedAction(
+                name=call.action_name, params=params,
+                rationale=f"lora head (conf={conf:.2f})",
+            ))
+        return plans
+
+    def _ensure_lora_decoder(self, vocabulary: ActionVocabulary):
+        """Lazily build the LoRA decoder keyed to this vocabulary."""
+        from cadenza.parser.lora_action_head import LoRAActionDecoder
+        cache = getattr(self, "_lora_decoder", None)
+        if cache is None or cache[0] is not vocabulary:
+            decoder = LoRAActionDecoder(
+                vocabulary=vocabulary,
+                hidden_dim=128,
+                max_seq_len=16,
+                lora_rank=8,
+            )
+            self._lora_decoder = (vocabulary, decoder)
+        return self._lora_decoder[1]
 
     def _infer(self, observation: dict, goal: str) -> np.ndarray | None:
         if self.model is None:

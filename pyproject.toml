@@ -23,6 +23,7 @@ dependencies = [
 
 [project.optional-dependencies]
 deploy = ["paramiko"]
+ai = ["torch>=2.0"]
 
 [project.urls]
 Homepage = "https://github.com/aparekh02/cadenza"
