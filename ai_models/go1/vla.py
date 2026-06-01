@@ -27,7 +27,6 @@ import numpy as np
 
 from cadenza import WorldModelAdapter, AdapterReply, ProposedAction
 from cadenza.actions.library import ActionCall  # noqa: F401  (re-export point)
-from cadenza.parser.translator import CommandParser
 from cadenza.stack.trajectory import TrajectoryMonitor
 from cadenza.stack.vocabulary import ActionVocabulary
 
@@ -194,29 +193,12 @@ class VLA(WorldModelAdapter):
     # ── Reasoning helpers ────────────────────────────────────────────────────
 
     def _build_plan(self, goal: str, vocabulary: ActionVocabulary) -> list[ProposedAction]:
-        if not goal.strip():
-            return [ProposedAction(name="stand", params={},
-                                   rationale="no goal supplied; standing")]
-        parser = CommandParser(vocabulary.robot)
-        out: list[ProposedAction] = []
-        for call in parser.parse(goal):
-            if call.action_name not in vocabulary:
-                continue
-            params: dict[str, Any] = {"speed": call.speed, "repeat": call.repeat}
-            if call.distance_m > 0:
-                params["distance_m"] = call.distance_m
-            if call.rotation_rad != 0:
-                params["rotation_rad"] = call.rotation_rad
-            if call.duration_s > 0:
-                params["duration_s"] = call.duration_s
-            out.append(ProposedAction(
-                name=call.action_name, params=params,
-                rationale="parsed from goal",
-            ))
-        if not out:
-            out = [ProposedAction(name="stand", params={},
-                                  rationale="goal unparseable; standing")]
-        return out
+        raise NotImplementedError(
+            "go1.VLA: goal-text plan building has been removed. "
+            "The previous CommandParser-based path silently dropped unparseable "
+            "tokens and out-of-vocabulary actions; a replacement interface "
+            "(model -> ProposedAction directly) needs to be designed."
+        )
 
     def _terrain_override(
         self,

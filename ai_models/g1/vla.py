@@ -1,10 +1,11 @@
 """SmolVLA-based world-model adapter tuned for the G1 humanoid.
 
 G1's action vocabulary is narrower than Go1 (no side_step, climb_step,
-turn primitives in the current library). This adapter therefore drives
-the robot through plan-queue mode: the goal text is parsed into action
-calls by ``cadenza.parser.translator.CommandParser`` and executed in
-order, with SmolVLA inference run each tick for perception/logging.
+turn primitives in the current library). The previous goal-text -> plan
+path (via ``cadenza.parser.translator.CommandParser``) has been removed;
+``_build_plan`` now raises until a replacement model -> ProposedAction
+interface is designed. SmolVLA inference still runs each tick for
+perception/logging.
 """
 
 from __future__ import annotations
@@ -17,7 +18,6 @@ from typing import Any
 import numpy as np
 
 from cadenza import WorldModelAdapter, AdapterReply, ProposedAction
-from cadenza.parser.translator import CommandParser
 from cadenza.stack.vocabulary import ActionVocabulary
 
 
@@ -70,27 +70,12 @@ class VLA(WorldModelAdapter):
         return self._episode
 
     def _build_plan(self, goal: str, vocabulary: ActionVocabulary) -> list[ProposedAction]:
-        if not goal.strip():
-            return [ProposedAction(name="stand", params={},
-                                   rationale="no goal supplied; standing")]
-        parser = CommandParser(vocabulary.robot)
-        out: list[ProposedAction] = []
-        for call in parser.parse(goal):
-            if call.action_name not in vocabulary:
-                continue
-            params: dict[str, Any] = {}
-            if call.distance_m > 0:
-                params["distance_m"] = call.distance_m
-            if call.duration_s > 0:
-                params["duration_s"] = call.duration_s
-            out.append(ProposedAction(
-                name=call.action_name, params=params,
-                rationale="parsed from goal",
-            ))
-        if not out:
-            out = [ProposedAction(name="stand", params={},
-                                  rationale="goal unparseable; standing")]
-        return out
+        raise NotImplementedError(
+            "g1.VLA: goal-text plan building has been removed. "
+            "The previous CommandParser-based path silently dropped unparseable "
+            "tokens and out-of-vocabulary actions; a replacement interface "
+            "(model -> ProposedAction directly) needs to be designed."
+        )
 
     def _infer(self, observation: dict, goal: str) -> np.ndarray | None:
         if self.model is None:
