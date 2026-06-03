@@ -188,6 +188,33 @@ def test_decoder_handles_long_goal_with_truncation_report() -> None:
           f"truncated={report.truncated}, stop={report.stop_emitted}")
 
 
+def test_encoder_reproducible_across_processes() -> None:
+    """HashTextEncoder must embed identically across processes.
+
+    The encoder buckets trigrams with a stable hash; a LoRA adapter trained
+    in one process has to decode the same way when reloaded in another. This
+    starts a subprocess with a different PYTHONHASHSEED and asserts the
+    embedding matches bit-for-bit — a salted builtin hash() would diverge.
+    """
+    import subprocess
+    text = "walk forward then turn left into the debris"
+    enc = HashTextEncoder(hidden_dim=48, max_seq_len=8)
+    here = [round(float(x), 6) for x in enc(text).flatten().tolist()]
+    snippet = (
+        "import os; os.environ['KMP_DUPLICATE_LIB_OK']='TRUE';"
+        "from cadenza.parser.lora_action_head import HashTextEncoder;"
+        "e=HashTextEncoder(hidden_dim=48, max_seq_len=8);"
+        f"print(','.join(f'{{round(float(x),6)}}' for x in e({text!r}).flatten().tolist()))"
+    )
+    env = dict(os.environ, PYTHONHASHSEED="12345")
+    out = subprocess.run([sys.executable, "-c", snippet],
+                         capture_output=True, text=True, env=env)
+    assert out.returncode == 0, out.stderr
+    there = [float(v) for v in out.stdout.strip().split(",")]
+    assert here == there, "encoder differs across processes (hash not stable)"
+    print(f"  [ok] encoder reproducible across processes ({len(here)} dims match)")
+
+
 def main() -> int:
     tests = [
         test_constrained_output_is_in_vocab,
@@ -198,6 +225,7 @@ def main() -> int:
         test_training_step_reduces_loss,
         test_stop_token_truncates_sequence,
         test_decoder_handles_long_goal_with_truncation_report,
+        test_encoder_reproducible_across_processes,
     ]
     failures = 0
     for t in tests:

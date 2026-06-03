@@ -28,6 +28,7 @@ any encoder that produces ``[batch, time, hidden_dim]`` tensors.
 
 from __future__ import annotations
 
+import hashlib
 import math
 from dataclasses import dataclass, field
 from typing import Iterable
@@ -431,6 +432,11 @@ class HashTextEncoder(nn.Module):
     This exists so ``LoRAActionDecoder`` is runnable end-to-end without
     requiring a transformer. For real performance you should plug in a
     learned text encoder.
+
+    Determinism is load-bearing here: a LoRA adapter trained in one process
+    must decode identically when reloaded in another. Trigram bucketing
+    therefore uses ``hashlib`` (stable across processes) rather than the
+    builtin ``hash()``, which is salted per process via ``PYTHONHASHSEED``.
     """
 
     def __init__(
@@ -449,13 +455,22 @@ class HashTextEncoder(nn.Module):
         nn.init.kaiming_uniform_(proj, a=math.sqrt(5), generator=g)
         self.proj = nn.Parameter(proj, requires_grad=False)
 
+    def _trigram_bucket(self, tri: str) -> int:
+        """Map a trigram to a feature bucket with a process-STABLE hash.
+
+        Python's builtin hash() is salted per process, so it cannot be
+        used here without breaking adapter reload reproducibility.
+        hashlib.md5 is deterministic across processes and runs.
+        """
+        digest = hashlib.md5(tri.encode("utf-8")).digest()
+        return int.from_bytes(digest[:8], "big") % self.feature_dim
+
     def _featurise(self, token: str) -> torch.Tensor:
         vec = torch.zeros(self.feature_dim, dtype=torch.float32)
         padded = f"^{token.lower()}$"
         for i in range(len(padded) - 2):
             tri = padded[i : i + 3]
-            h = hash(tri) % self.feature_dim
-            vec[h] += 1.0
+            vec[self._trigram_bucket(tri)] += 1.0
         norm = vec.norm()
         return vec / norm if float(norm) > 0 else vec
 
