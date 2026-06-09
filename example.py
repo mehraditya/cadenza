@@ -1,6 +1,9 @@
-"""Cadenza Go1 — VLA + multi-modal sensing demo.
+"""Cadenza Go1 — world-model driven demo.
 
-   mjpython example.py
+Attach a VLA model and perception modalities, then hand the robot a
+natural-language goal. Cadenza closes the loop: sense → think → act.
+
+    mjpython example.py
 """
 
 import cadenza

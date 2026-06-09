@@ -22,7 +22,9 @@ Run and deploy complex robot actions with a simple Python SDK.
 
 Cadenza lets you simply write complex motion-targeted code and deploy on MuJoCo or hardware for Unitree [Go1 (quadruped)](#-go1-quadruped) and [G1 (humanoid)](#-g1-humanoid) robots.
 
-Our pip package: [Cadenza Lab](https://pypi.org/project/cadenza-lab/)
+**Website:** [www.cadenzalabs.xyz](http://www.cadenzalabs.xyz) &nbsp;•&nbsp; **pip package:** [cadenza-lab](https://pypi.org/project/cadenza-lab/)
+
+> **Want to integrate your own hardware?** Cadenza targets the Go1 and G1 today. If you'd like support for **drones, robot arms, or any other robot**, reach out — [acparekh@stanford.edu](mailto:acparekh@stanford.edu).
 
 ## ⭐ Features
 
@@ -36,7 +38,8 @@ Our pip package: [Cadenza Lab](https://pypi.org/project/cadenza-lab/)
 ### Simulation
 * **MuJoCo simulator** built in — test any action sequence before touching hardware
 * **Natural language commands**: `cadenza sim go1 "walk forward then jump"` just works
-* **VLA Guardian**: SmolVLM-256M watches the forward camera and injects avoidance actions when obstacles appear
+* **World-model loop**: attach a VLA model + perception modalities with `setup()`, hand the robot a `goal`, and Cadenza closes the sense → think → act loop
+* **Bring your own models**: concrete VLA / depth / RGB models live in the `ai_models/` package — swap in your own without touching the framework
 
 ### Deploy
 * **SSH deploy**: upload and run a script on the robot's onboard computer
@@ -46,21 +49,12 @@ Our pip package: [Cadenza Lab](https://pypi.org/project/cadenza-lab/)
 ## ⚡ Quickstart
 
 ```bash
-git clone https://github.com/aparekh02/cadenza.git
-cd cadenza
-
-python -m venv .venv
-source .venv/bin/activate
-pip install -e .
+pip install cadenza-lab
 ```
 
-Run the demo — the Go1 stands, walks 2m, arcs through a turn, jumps, and sits:
+### Scripted actions
 
-```bash
-mjpython example.py
-```
-
-### Python API
+Compose primitives into a sequence and run it in MuJoCo — the Go1 stands, walks 2m, arcs through a turn, jumps, and sits. Nest actions in a list to run them concurrently.
 
 ```python
 import cadenza
@@ -75,15 +69,39 @@ go1.run([
 ])
 ```
 
+### World-model driven
+
+Attach a VLA model and perception modalities with `setup()`, then hand the robot a natural-language `goal`. Cadenza closes the loop: sense → think → act.
+
+```python
+import cadenza
+from ai_models.go1 import VLA, Depth, RGB
+
+go1 = cadenza.go1()
+go1.setup(
+    model=VLA(),
+    sense=[Depth(), RGB()],
+)
+go1.run(
+    goal="reach the green beacon at the top of the stairs and sit",
+    scene="stairs",
+    target=(-5.5, 0.0),
+)
+```
+
+Cadenza ships the framework — base adapters, perception modalities, and the runtime. The concrete models live in the [`ai_models/`](ai_models/) package alongside your project, so you can swap in your own VLA or perception stack. The repo's [`example.py`](example.py) runs this demo end-to-end: `mjpython example.py`.
+
 ### G1 Humanoid
 
 ```python
+import cadenza
+
 g1 = cadenza.g1()
 g1.run([
     g1.stand(),
-    g1.walk_forward(speed=0.3, distance_m=1.0),
+    g1.walk_forward(distance_m=1.0),
     g1.crouch(),
-    g1.lift_left_hand(),
+    g1.hold(duration=1.0),
     g1.stand(),
 ])
 ```
@@ -109,37 +127,6 @@ cadenza sim go1 "walk forward" --vla --obstacles      # VLA obstacle avoidance
 cadenza deploy go1 --ip 192.168.123.15 -c "..."       # deploy via SSH
 cadenza deploy go1 --ip ... --mode direct             # deploy via DDS
 cadenza deploy go1 --ip ... --mode bridge             # bridge mode
-```
-
-## 🚀 Deploy
-
-### SSH Deploy
-Upload and run a script on the robot's onboard computer.
-
-```bash
-cadenza deploy go1 --ip 192.168.123.15 -c "walk forward then sit"
-```
-
-### DDS Direct
-Send motor commands directly from your laptop over DDS (same network).
-
-```bash
-cadenza deploy go1 --ip 192.168.123.15 --mode direct -c "stand then walk forward"
-```
-
-### Bridge Mode
-Run heavy computation on your laptop, lightweight actions on the robot — ideal for model inference loops.
-
-```python
-go1 = cadenza.go1()
-bridge = go1.deploy_ssh_bridge(host="192.168.123.15", key="~/.ssh/go1_rsa")
-
-while True:
-    state = bridge.telemetry
-    action = my_model(state)
-    bridge.send_action(action, speed=0.5)
-
-bridge.estop()
 ```
 
 ## 📦 Action Library Reference
@@ -229,11 +216,45 @@ import cadenza
 g1 = cadenza.g1()
 g1.run([
     g1.stand(),
-    g1.walk_forward(speed=0.3, distance_m=1.0),
+    g1.walk_forward(distance_m=1.0),
     g1.crouch(),
-    g1.lift_left_hand(),
+    g1.hold(duration=1.0),
     g1.stand(),
 ])
+```
+
+Or hand it a goal with a world model:
+
+```python
+import cadenza
+from ai_models.g1 import VLA, Depth, RGB
+
+g1 = cadenza.g1()
+g1.setup(model=VLA(), sense=[Depth(), RGB()])
+g1.run(goal="walk to the chair and sit", target=(2.0, 0.0))
+```
+
+## 🚀 Deploy
+
+Run the same actions on real hardware. Three modes:
+
+| Mode | What it does | Command |
+|------|--------------|---------|
+| **SSH** | Upload and run a script on the robot's onboard computer | `cadenza deploy go1 --ip 192.168.123.15 -c "walk forward then sit"` |
+| **DDS direct** | Send motor commands from your laptop over DDS (same network) | `cadenza deploy go1 --ip 192.168.123.15 --mode direct -c "..."` |
+| **Bridge** | Heavy compute on your laptop, lightweight actions on the robot | see below |
+
+Bridge mode keeps a live control handle for model-in-the-loop control:
+
+```python
+go1 = cadenza.go1()
+bridge = go1.deploy_ssh_bridge(host="192.168.123.15", key="~/.ssh/go1_rsa")
+
+while True:
+    action = my_model(bridge.telemetry)
+    bridge.send_action(action, speed=0.5)
+
+bridge.estop()
 ```
 
 ## 💚 Community
