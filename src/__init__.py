@@ -68,6 +68,29 @@ def g1(**kwargs) -> G1:
     return G1(**kwargs)
 
 
+def connect(*robots, narrate: bool = True, out=None):
+    """Connect robots into one terminal so they can coordinate over MCP.
+
+    Reuses each robot's user-facing narration channel for robot↔robot messages,
+    routed through a FastMCP coordination server. Returns a
+    ``cadenza.mcp.CoordinationTerminal``; each robot passed in gets a ``.comm``
+    link.
+
+    Usage::
+
+        import cadenza
+        go1, g1 = cadenza.go1(), cadenza.g1()
+        with cadenza.connect(go1, g1) as term:
+            go1.comm.tell("g1", "I'll scout left, you hold position")
+            g1.comm.broadcast("copy that")
+            print(g1.comm.messages())
+
+    FastMCP is an optional extra: ``pip install cadenza-lab[mcp]``.
+    """
+    from cadenza.mcp import connect as _connect
+    return _connect(*robots, narrate=narrate, out=out)
+
+
 # Lazy import for VLA (heavy dependencies)
 def __getattr__(name: str):
     if name == "VLAGuardian":
