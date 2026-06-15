@@ -36,6 +36,7 @@ from cadenza.actions import (
 from cadenza.sim import Sim, run, view
 from cadenza.go1 import Go1, Step
 from cadenza.g1 import G1
+from cadenza.arm import Arm
 from cadenza.scene import Scene, Box, Sphere, Slope
 from cadenza.stack.gym_adapter import GymAdapter, Observation
 
@@ -71,6 +72,25 @@ def g1(**kwargs) -> G1:
         g1.run([g1.stand(), g1.walk_forward(), g1.lift_left_hand()])
     """
     return G1(**kwargs)
+
+
+def arm(**kwargs) -> Arm:
+    """Create a Cadenza 6-axis articulated arm controller.
+
+    Unlike the legged robots, the arm is fixed-base and Cartesian: actions are
+    poses and grasps, driven by inverse kinematics rather than gaits.
+
+    Usage::
+
+        import cadenza
+        arm = cadenza.arm()
+        arm.run([
+            arm.home(),
+            arm.pick((0.5, 0.0, 0.43)),
+            arm.place((0.4, 0.22, 0.43)),
+        ])
+    """
+    return Arm(**kwargs)
 
 
 def connect(*robots, narrate: bool = True, out=None):

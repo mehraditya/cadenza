@@ -1963,8 +1963,14 @@ class ActionLibrary:
 
 _LIBRARIES: dict[str, ActionLibrary] = {}
 
-def get_library(robot: str) -> ActionLibrary:
+def get_library(robot: str):
     robot = robot.lower()
+    if robot == "arm":
+        # The 6-axis arm has a Cartesian action set, not legged primitives.
+        from cadenza.actions.arm_library import ArmActionLibrary
+        if "arm" not in _LIBRARIES:
+            _LIBRARIES["arm"] = ArmActionLibrary()
+        return _LIBRARIES["arm"]
     if robot not in _LIBRARIES:
         _LIBRARIES[robot] = ActionLibrary(robot)
     return _LIBRARIES[robot]

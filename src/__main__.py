@@ -16,7 +16,7 @@ def cli():
 
 
 @cli.command("list")
-@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1", "arm"]))
 def list_actions_cmd(robot: str):
     """List available actions for a robot."""
     from cadenza.actions import list_actions

@@ -5,6 +5,9 @@ from cadenza.actions.library import (
     GaitAction, ActionLibrary, ActionCall,
     get_action, list_actions, get_library,
 )
+from cadenza.actions.arm_library import (
+    ArmAction, ArmActionSpec, ArmActionLibrary,
+)
 from cadenza.actions.benchmarks import ActionBenchmark, BenchmarkRecorder, BenchmarkMemory
 from cadenza.actions.action_builder import (
     GroupAction, CustomAction, ReadOnlyBuiltinError,
