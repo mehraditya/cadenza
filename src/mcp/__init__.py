@@ -23,6 +23,7 @@ FastMCP is an optional extra: ``pip install cadenza-lab[mcp]``.
 from __future__ import annotations
 
 from cadenza.mcp.bus import CoordinationBus, Message
+from cadenza.mcp.coordinator import MissionCoordinator, MissionPlan, SubGoal
 from cadenza.mcp.link import CoordinationTerminal, RobotLink, connect
 from cadenza.mcp.server import build_server
 
@@ -33,4 +34,7 @@ __all__ = [
     "RobotLink",
     "connect",
     "build_server",
+    "MissionCoordinator",
+    "MissionPlan",
+    "SubGoal",
 ]

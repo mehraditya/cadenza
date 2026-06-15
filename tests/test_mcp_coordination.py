@@ -148,5 +148,93 @@ def test_local_link_prefers_explicit_name_for_duplicate_robots():
         term.close()
 
 
+# ── Coordinator (split one human goal into per-robot subgoals) ────────────────
+
+def test_coordinator_splits_explicit_targets_and_broadcast():
+    go1 = cadenza.go1()
+    g1 = cadenza.g1()
+    buf = io.StringIO()
+
+    with cadenza.connect(go1, g1, out=buf) as term:
+        plan = term.coordinate(
+            "go1 scout the left corridor and g1 hold the doorway "
+            "then everyone regroup at the pad"
+        )
+        # Each subgoal was delegated over the MCP into the right inbox(es).
+        # (read inboxes inside the terminal — the MCP loop closes on exit)
+        go1_texts = [m["text"] for m in go1.comm.messages()]
+        g1_texts = [m["text"] for m in g1.comm.messages()]
+
+    # Three subgoals: two explicitly targeted, one broadcast.
+    assert [(sg.robot, sg.goal, sg.broadcast) for sg in plan.subgoals] == [
+        ("go1", "scout the left corridor", False),
+        ("g1", "hold the doorway", False),
+        ("*", "regroup at the pad", True),
+    ]
+    assert go1_texts == ["scout the left corridor", "regroup at the pad"]
+    assert g1_texts == ["hold the doorway", "regroup at the pad"]
+    # ...and narrated into the one shared terminal by the coordinator.
+    out = buf.getvalue()
+    assert "[coordinator]" in out
+    assert "scout the left corridor" in out and "regroup at the pad" in out
+
+
+def test_coordinator_routes_unnamed_clauses_by_capability():
+    from cadenza.mcp import MissionCoordinator
+
+    go1 = cadenza.go1()
+    g1 = cadenza.g1()
+    with cadenza.connect(go1, g1, narrate=False) as term:
+        plan = MissionCoordinator(term).plan(
+            "crawl under the table and grab the red cube"
+        )
+
+    assert [(sg.robot, sg.goal) for sg in plan.subgoals] == [
+        ("go1", "crawl under the table"),   # quadruped hint -> go1
+        ("g1", "grab the red cube"),         # humanoid hint -> g1
+    ]
+
+
+def test_coordinator_round_robins_generic_clauses():
+    from cadenza.mcp import MissionCoordinator
+
+    go1 = cadenza.go1()
+    g1 = cadenza.g1()
+    with cadenza.connect(go1, g1, narrate=False) as term:
+        plan = MissionCoordinator(term).plan(
+            "search the room, mark the exits, sweep the hallway"
+        )
+
+    # Three generic clauses dealt out evenly across two robots, stable order.
+    robots = [sg.robot for sg in plan.subgoals]
+    assert sorted(robots) == ["g1", "go1", "go1"] or sorted(robots) == ["g1", "g1", "go1"]
+    assert len(plan.subgoals) == 3
+    # Every connected robot gets work via assignments().
+    assigned = plan.assignments()
+    assert assigned["go1"] and assigned["g1"]
+
+
+def test_coordinator_subgoals_parse_into_actions():
+    from cadenza.mcp import MissionCoordinator
+
+    go1 = cadenza.go1()
+    g1 = cadenza.g1()
+    with cadenza.connect(go1, g1, narrate=False) as term:
+        plan = MissionCoordinator(term).plan("go1 walk_forward")
+
+    assert [a.action_name for a in plan.actions("go1")] == ["walk_forward"]
+
+
+def test_coordinator_needs_at_least_one_robot():
+    from cadenza.mcp import CoordinationTerminal, MissionCoordinator
+
+    term = CoordinationTerminal(narrate=False)
+    try:
+        with pytest.raises(ValueError):
+            MissionCoordinator(term).plan("do something")
+    finally:
+        term.close()
+
+
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))

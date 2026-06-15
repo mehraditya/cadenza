@@ -181,6 +181,34 @@ class CoordinationTerminal:
     def robots(self) -> list[str]:
         return self.bus.robots()
 
+    def robot_type(self, name: str) -> str:
+        """Platform tag a robot registered with (e.g. 'quadruped'); '' if unset."""
+        link = self._links.get(name)
+        return link.robot_type if link is not None else ""
+
+    def coordinate(self, goal: str, *, route_by_capability: bool = True) -> Any:
+        """Split one human goal into per-robot subgoals and dispatch them.
+
+        Hands the mission to a :class:`~cadenza.mcp.coordinator.MissionCoordinator`
+        (created once and reused), which breaks ``goal`` into smaller individual
+        goals and delegates each to a connected robot over this same MCP — so the
+        hand-off is narrated into the shared terminal. Returns the
+        :class:`~cadenza.mcp.coordinator.MissionPlan`.
+
+        Example::
+
+            with cadenza.connect(go1, g1) as term:
+                plan = term.coordinate("go1 scout left and g1 hold the door")
+                go1.comm.messages()   # -> "scout left"
+        """
+        from cadenza.mcp.coordinator import MissionCoordinator
+
+        if getattr(self, "_coordinator", None) is None:
+            self._coordinator = MissionCoordinator(
+                self, route_by_capability=route_by_capability
+            )
+        return self._coordinator.run(goal)
+
     def history(self) -> list[dict[str, Any]]:
         """Full ordered transcript of the coordination conversation."""
         return [m.as_dict() for m in self.bus.history()]
