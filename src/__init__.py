@@ -1,6 +1,11 @@
 import os as _os
 _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+# ARM tuning: pin BLAS/torch thread pools to the host's performance cores.
+# Must run before numpy/torch import to take effect for OpenBLAS-style backends.
+from cadenza._accel import tune_threads as _tune_threads
+_tune_threads()
+
 """Cadenza — Developer-first action library for Unitree robots.
 
 Quick start::
