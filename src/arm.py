@@ -44,6 +44,14 @@ _GRIP_CLOSED = 0.022
 _HOVER = 0.11          # height to approach above a target before descending
 _LIFT = 0.18           # height to lift to after grasping
 
+# Hand/table safety. The fingertips hang ~11mm below the pinch site (the IK
+# target) when the gripper points straight down. We never command the pinch
+# lower than the work surface plus this clearance, so the hand always stops
+# right above the table instead of being driven into (or through) it.
+_FINGERTIP_BELOW_PINCH = 0.011
+_SURFACE_MARGIN = 0.003
+_TABLE_CLEARANCE = _FINGERTIP_BELOW_PINCH + _SURFACE_MARGIN
+
 # Desired top-down gripper orientation (palm +z pointing world -z): Rx(pi).
 _Q_DOWN = np.array([0.0, 1.0, 0.0, 0.0])
 
@@ -56,6 +64,7 @@ class _Runtime:
         self.data = mujoco.MjData(self.model)
         self._phys = max(1, int(round(1.0 / (self.model.opt.timestep * hz))))
 
+        self._scratch = mujoco.MjData(self.model)  # for IK / FK probes
         m = self.model
         self._site = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_SITE, "pinch")
         self._palm = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_BODY, "palm")
@@ -69,6 +78,19 @@ class _Runtime:
             mujoco.mj_resetDataKeyframe(m, self.data, 0)
         mujoco.mj_forward(m, self.data)
         self._grip = _GRIP_OPEN
+
+        # Work-surface no-go floor: the top of the table and its (x, y) footprint,
+        # read from the model so the clamp tracks the geometry, not magic numbers.
+        tt = mujoco.mj_name2id(m, mujoco.mjtObj.mjOBJ_GEOM, "table_top")
+        if tt >= 0:
+            self._surface_z = float(self.data.geom_xpos[tt][2] + m.geom_size[tt][2])
+            center = self.data.geom_xpos[tt][:2].copy()
+            half = m.geom_size[tt][:2].copy()
+            self._table_lo = center - half
+            self._table_hi = center + half
+        else:
+            self._surface_z = 0.0
+            self._table_lo = self._table_hi = None
 
     # ── Inverse kinematics (position + top-down orientation) ──────────────────
 
@@ -119,8 +141,51 @@ class _Runtime:
                 render()
         return float(np.linalg.norm(qarm - self.data.qpos[:6]))
 
+    def _over_table(self, t) -> bool:
+        return (
+            self._table_lo is not None
+            and self._table_lo[0] <= t[0] <= self._table_hi[0]
+            and self._table_lo[1] <= t[1] <= self._table_hi[1]
+        )
+
+    def _surface_at(self, t) -> float:
+        """Height of the no-go floor under (x, y): tabletop over the table, else
+        the ground."""
+        return self._surface_z if self._over_table(t) else 0.0
+
+    def _fingertip_z(self, qarm) -> float:
+        """World z of the lowest hand point for a candidate arm pose (top-down,
+        so that's the fingertips: ``_FINGERTIP_BELOW_PINCH`` under the site)."""
+        s = self._scratch
+        s.qpos[:] = self.data.qpos
+        s.qpos[:6] = qarm
+        mujoco.mj_forward(self.model, s)
+        return float(s.site_xpos[self._site][2]) - _FINGERTIP_BELOW_PINCH
+
+    def _solve_above_surface(self, target) -> np.ndarray:
+        """IK that provably keeps the hand above the work surface.
+
+        First clamp the target to the no-go floor, then solve. Because the IK
+        can undershoot on awkward low reaches (returning a pose whose fingertips
+        still dip below the table), check the *solution's* fingertip height and
+        nudge the target up until the hand clears — so the commanded pose never
+        buries the gripper in the table, regardless of IK accuracy.
+        """
+        t = np.asarray(target, dtype=float).copy()
+        min_tip = self._surface_at(t) + _SURFACE_MARGIN
+        if t[2] < min_tip + _FINGERTIP_BELOW_PINCH:
+            t[2] = min_tip + _FINGERTIP_BELOW_PINCH
+        q = self._ik(t)
+        for _ in range(8):
+            deficit = min_tip - self._fingertip_z(q)
+            if deficit <= 1e-4:
+                break
+            t[2] += deficit + 0.002
+            q = self._ik(t)
+        return q
+
     def move_to(self, target, settle: int = 500, render=None) -> float:
-        return self.move_joints(self._ik(np.asarray(target, float)), settle, render)
+        return self.move_joints(self._solve_above_surface(target), settle, render)
 
     def set_grip(self, opening: float, settle: int = 150, render=None) -> None:
         self._grip = float(opening)
