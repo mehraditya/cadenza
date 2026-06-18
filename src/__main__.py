@@ -16,7 +16,7 @@ def cli():
 
 
 @cli.command("list")
-@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1", "arm"]))
 def list_actions_cmd(robot: str):
     """List available actions for a robot."""
     from cadenza.actions import list_actions
@@ -75,6 +75,93 @@ def sim(robot: str, command: str, disturbance: float | None, vla: bool, obstacle
         calls = parser.parse(command)
         steps = [g1._call_to_step(c) for c in calls]
         g1.run(steps)
+
+
+@cli.group("action")
+def action_group():
+    """Inspect the action library (local actions + read-only built-ins)."""
+    pass
+
+
+@action_group.command("list")
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.option("--project", type=click.Path(), default=None,
+              help="Project directory containing local actions/*.json")
+def action_list(robot: str, project: str | None):
+    """List local actions and the read-only built-ins for a robot."""
+    from pathlib import Path
+    from cadenza.actions import action_builder as ab
+
+    local = []
+    if project:
+        adir = Path(project) / "actions"
+        if adir.is_dir():
+            local = sorted(p.stem for p in adir.glob("*.json"))
+
+    builtins = ab.list_builtin_actions(robot)
+
+    click.echo(f"\n  {robot.upper()} actions\n")
+    if project:
+        click.echo("  local:")
+        if local:
+            for name in local:
+                click.echo(f"    {name}")
+        else:
+            click.echo("    (none)")
+        click.echo()
+    if builtins:
+        click.echo(f"  built-in (read-only): {', '.join(builtins)}")
+    else:
+        click.echo("  built-in (read-only): (none bundled)")
+    click.echo()
+
+
+@action_group.command("show")
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.argument("name")
+@click.option("--project", type=click.Path(), default=None,
+              help="Project directory containing local actions/*.json")
+def action_show(robot: str, name: str, project: str | None):
+    """Show one action, resolving local first then the built-in library."""
+    import json
+    from cadenza.actions import action_builder as ab
+
+    action, source = ab.resolve_action(project, robot, name)
+    if action is None:
+        click.echo(f"Action '{name}' not found for {robot}.", err=True)
+        raise SystemExit(1)
+
+    tag = " [read-only built-in]" if source == "builtin" else ""
+    click.echo(f"\n  {name} ({robot}){tag}\n")
+    click.echo(json.dumps(ab.build_action_payload(action), indent=2))
+    click.echo()
+
+
+@action_group.command("remove")
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.argument("name")
+@click.option("--project", type=click.Path(), default=None,
+              help="Project directory containing local actions/*.json")
+def action_remove(robot: str, name: str, project: str | None):
+    """Remove a local action. Refuses on a read-only built-in."""
+    from pathlib import Path
+    from cadenza.actions import action_builder as ab
+
+    if ab.is_builtin_action(robot, name):
+        click.echo(f"{name} is a read-only built-in; it can't be edited or "
+                   f"removed.", err=True)
+        raise SystemExit(1)
+
+    if not project:
+        click.echo("Error: --project required to remove a local action", err=True)
+        raise SystemExit(1)
+
+    local = Path(project) / "actions" / f"{name}.json"
+    if not local.is_file():
+        click.echo(f"Local action '{name}' not found in {project}.", err=True)
+        raise SystemExit(1)
+    local.unlink()
+    click.echo(f"Removed local action '{name}'.")
 
 
 @cli.command()

@@ -94,6 +94,8 @@ class VLAGuardian:
         self.show_camera = show_camera
         self._processor = None
         self._model = None
+        self._device = None
+        self._dtype = None
         self._renderer = None
         self._loaded = False
         self._robot_body_ids = None
@@ -106,11 +108,16 @@ class VLAGuardian:
         if self._loaded:
             return
         from transformers import AutoProcessor, AutoModelForImageTextToText
-        import torch
-        print(f"  VLA Guardian: loading {self.model_id}...")
+        from cadenza._accel import torch_device, torch_dtype
+
+        self._device = torch_device()
+        self._dtype = torch_dtype(self._device)
+        print(f"  VLA Guardian: loading {self.model_id} on {self._device.type} "
+              f"({str(self._dtype).split('.')[-1]})...")
         self._processor = AutoProcessor.from_pretrained(self.model_id)
         self._model = AutoModelForImageTextToText.from_pretrained(
-            self.model_id, dtype=torch.float32)
+            self.model_id, dtype=self._dtype)
+        self._model.to(self._device)
         self._model.eval()
         self._loaded = True
         print(f"  VLA Guardian: ready")
@@ -413,6 +420,9 @@ class VLAGuardian:
         prompt_text = self._processor.apply_chat_template(
             messages, tokenize=False, add_generation_prompt=True)
         inputs = self._processor(text=prompt_text, images=[image], return_tensors="pt")
+        # Move to the accelerator; cast only floating tensors (pixel_values) to
+        # the model dtype, leaving integer input_ids untouched.
+        inputs = inputs.to(device=self._device, dtype=self._dtype)
         with torch.no_grad():
             output_ids = self._model.generate(**inputs, max_new_tokens=50, do_sample=False)
         generated = output_ids[0][inputs["input_ids"].shape[1]:]

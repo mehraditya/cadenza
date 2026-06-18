@@ -35,10 +35,29 @@ class CommandParser:
         parts = [p.strip() for p in re.split(r'\s+(?:then|and)\s+', command) if p.strip()]
         calls = []
         for part in parts:
+            expanded = self._expand_builtin(part)
+            if expanded is not None:
+                calls.extend(expanded)
+                continue
             call = self._parse_single(part)
             if call:
                 calls.append(call)
         return calls
+
+    def _expand_builtin(self, text: str) -> list[ActionCall] | None:
+        """Expand a built-in *group* action named by `text` into its steps.
+
+        Lets missions call read-only built-ins by name with no account and no
+        network. Returns None when `text` is not a built-in group action (so
+        the normal single-action parse runs); also None for keyframe (custom)
+        built-ins, which aren't expressible as ActionCall steps.
+        """
+        from cadenza.actions import action_builder as ab
+        name = text.strip().lower().replace(" ", "_").replace("-", "_")
+        action, _ = ab.resolve_action(None, self.robot, name)
+        if isinstance(action, ab.GroupAction):
+            return list(action.steps)
+        return None
 
     def _parse_single(self, text: str) -> ActionCall | None:
         """Parse a single command fragment."""

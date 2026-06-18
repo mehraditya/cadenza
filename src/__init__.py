@@ -1,6 +1,11 @@
 import os as _os
 _os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
 
+# ARM tuning: pin BLAS/torch thread pools to the host's performance cores.
+# Must run before numpy/torch import to take effect for OpenBLAS-style backends.
+from cadenza._accel import tune_threads as _tune_threads
+_tune_threads()
+
 """Cadenza — Developer-first action library for Unitree robots.
 
 Quick start::
@@ -31,6 +36,7 @@ from cadenza.actions import (
 from cadenza.sim import Sim, run, view
 from cadenza.go1 import Go1, Step
 from cadenza.g1 import G1
+from cadenza.arm import Arm
 from cadenza.scene import Scene, Box, Sphere, Slope
 from cadenza.stack.gym_adapter import GymAdapter, Observation
 
@@ -66,6 +72,48 @@ def g1(**kwargs) -> G1:
         g1.run([g1.stand(), g1.walk_forward(), g1.lift_left_hand()])
     """
     return G1(**kwargs)
+
+
+def arm(**kwargs) -> Arm:
+    """Create a Cadenza 6-axis articulated arm controller.
+
+    Unlike the legged robots, the arm is fixed-base and Cartesian: actions are
+    poses and grasps, driven by inverse kinematics rather than gaits.
+
+    Usage::
+
+        import cadenza
+        arm = cadenza.arm()
+        arm.run([
+            arm.home(),
+            arm.pick((0.5, 0.0, 0.43)),
+            arm.place((0.4, 0.22, 0.43)),
+        ])
+    """
+    return Arm(**kwargs)
+
+
+def connect(*robots, narrate: bool = True, out=None):
+    """Connect robots into one terminal so they can coordinate over MCP.
+
+    Reuses each robot's user-facing narration channel for robot↔robot messages,
+    routed through a FastMCP coordination server. Returns a
+    ``cadenza.mcp.CoordinationTerminal``; each robot passed in gets a ``.comm``
+    link.
+
+    Usage::
+
+        import cadenza
+        go1, g1 = cadenza.go1(), cadenza.g1()
+        with cadenza.connect(go1, g1) as term:
+            go1.comm.tell("g1", "I'll scout left, you hold position")
+            g1.comm.broadcast("copy that")
+            print(g1.comm.messages())
+
+    FastMCP is an optional extra: ``pip install cadenza-lab[mcp]``.
+    """
+    from cadenza.mcp import connect as _connect
+    return _connect(*robots, narrate=narrate, out=out)
 
 
 # Lazy import for VLA (heavy dependencies)

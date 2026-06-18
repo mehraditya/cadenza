@@ -1,0 +1,174 @@
+<mujoco model="cadenza_arm6">
+  <!--
+    Cadenza 6-axis articulated arm — MuJoCo model.
+
+    A fixed-base 6-DOF manipulator (yaw, pitch, pitch, roll, pitch, roll) with a
+    parallel two-finger gripper, sitting next to a table with a pickable cube.
+    Primitive geoms only (no meshes) so it loads and renders anywhere.
+
+    Kinematic chain (all links nominally along local +z at the home pose):
+      base(fixed pedestal) -> j1 yaw -> j2 shoulder pitch -> j3 elbow pitch
+      -> j4 forearm roll -> j5 wrist pitch -> j6 wrist roll -> palm + fingers
+
+    The gripper approach axis is the palm's local +z; fingers slide along ±y.
+    Site "pinch" sits between the fingertips — IK drives this to a target.
+    The <equality> weld lets the controller "grasp": activated when the gripper
+    closes on the cube, it rigidly attaches the cube to the palm for the lift.
+  -->
+
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" iterations="50"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.35 0.35 0.35" specular="0.1 0.1 0.1"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="135" elevation="-22"/>
+    <quality shadowsize="2048"/>
+  </visual>
+
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0"
+             width="512" height="3072"/>
+    <texture type="2d" name="grid" builtin="checker" rgb1="0.22 0.3 0.4"
+             rgb2="0.12 0.17 0.24" width="512" height="512"/>
+    <material name="grid" texture="grid" texrepeat="8 8" reflectance="0.15"/>
+    <material name="metal" rgba="0.55 0.58 0.62 1"/>
+    <material name="joint" rgba="0.95 0.6 0.12 1"/>
+    <material name="link"  rgba="0.25 0.45 0.78 1"/>
+    <material name="grip"  rgba="0.13 0.14 0.17 1"/>
+    <material name="cube"  rgba="0.85 0.2 0.2 1"/>
+    <material name="table" rgba="0.55 0.42 0.30 1"/>
+  </asset>
+
+  <default>
+    <joint damping="3" armature="0.05" frictionloss="0.1"/>
+    <!-- Collision groups (contype/conaffinity bitmasks). Two geoms touch when
+         (contype_a & conaffinity_b) or (contype_b & conaffinity_a) is nonzero.
+           WORLD = contype 1, conaffinity 6  (floor, table, pedestal)
+           OBJECT= contype 2, conaffinity 5  (the cube)
+           HAND  = contype 4, conaffinity 3  (palm + fingers)
+         The HAND collides with WORLD and OBJECT: it HITS the table and cannot
+         pass through it, and it can grasp/knock the cube. OBJECT collides with
+         WORLD so the cube rests on the table.
+
+         The upper arm LINKS stay non-colliding (contype/conaffinity 0): they
+         are thin and sweep low over the table edge while reaching down to the
+         work surface, so colliding them just jams/saturates the actuators and
+         wrecks the reach (the hand is what the user actually sees punch through
+         the table). Only the hand, cube, and table/floor opt into contact. -->
+    <position kp="600" dampratio="1" forcerange="-200 200"/>
+    <geom contype="0" conaffinity="0" condim="3" friction="1 0.05 0.001"/>
+    <default class="finger">
+      <joint type="slide" damping="8" armature="0.01" range="0 0.045"/>
+      <position kp="400" dampratio="1" forcerange="-80 80"/>
+      <!-- HAND group: fingers collide with the cube AND the table/floor. -->
+      <geom material="grip" friction="2.5 0.2 0.02" condim="4"
+            contype="4" conaffinity="3"/>
+    </default>
+  </default>
+
+  <worldbody>
+    <light name="top" pos="0.3 0 2.5" dir="0 0 -1" diffuse="0.7 0.7 0.7"
+           castshadow="true"/>
+    <geom name="floor" type="plane" size="0 0 0.05" material="grid"
+          contype="1" conaffinity="6"/>
+
+    <!-- Work table the arm picks from / places to (WORLD group). -->
+    <body name="table" pos="0.5 0 0">
+      <!-- Stiff contact (short solref time constant, high solimp) so the table
+           barely deforms — a hard backstop in case anything is pushed onto it.
+           The controller's no-go clamp keeps the hand above this anyway. -->
+      <geom name="table_top" type="box" size="0.22 0.32 0.02" pos="0 0 0.38" material="table"
+            contype="1" conaffinity="6"
+            solref="0.004 1" solimp="0.98 0.99 0.001"/>
+      <geom name="leg_a" type="box" size="0.02 0.02 0.19" pos="0.18 0.28 0.19" material="table"
+            contype="1" conaffinity="6"/>
+      <geom name="leg_b" type="box" size="0.02 0.02 0.19" pos="0.18 -0.28 0.19" material="table"
+            contype="1" conaffinity="6"/>
+      <geom name="leg_c" type="box" size="0.02 0.02 0.19" pos="-0.18 0.28 0.19" material="table"
+            contype="1" conaffinity="6"/>
+      <geom name="leg_d" type="box" size="0.02 0.02 0.19" pos="-0.18 -0.28 0.19" material="table"
+            contype="1" conaffinity="6"/>
+    </body>
+
+    <!-- Fixed pedestal (WORLD group). -->
+    <geom name="pedestal" type="cylinder" size="0.09 0.1" pos="0 0 0.1" material="metal"
+          contype="1" conaffinity="6"/>
+
+    <!-- 6-axis arm. -->
+    <!-- gravcomp="1": each arm link is gravity-compensated, like a real robot
+         arm's controller. The position servos then track commanded poses
+         tightly (no droop under load), so the controller's no-go clamp actually
+         holds and the hand stays right above the table instead of sagging in. -->
+    <body name="shoulder" pos="0 0 0.2" gravcomp="1">
+      <joint name="j1" axis="0 0 1" range="-2.9 2.9"/>
+      <geom type="cylinder" size="0.07 0.05" pos="0 0 0.03" material="joint"/>
+      <body name="upper_arm" pos="0 0 0.06" gravcomp="1">
+        <joint name="j2" axis="0 1 0" range="-2.0 2.0"/>
+        <geom type="capsule" fromto="0 0 0 0 0 0.34" size="0.05" material="link"/>
+        <geom type="sphere" size="0.06" pos="0 0 0" material="joint"/>
+        <body name="forearm" pos="0 0 0.34" gravcomp="1">
+          <joint name="j3" axis="0 1 0" range="-2.7 2.7"/>
+          <geom type="capsule" fromto="0 0 0 0 0 0.28" size="0.042" material="link"/>
+          <geom type="sphere" size="0.052" pos="0 0 0" material="joint"/>
+          <body name="wrist_roll" pos="0 0 0.28" gravcomp="1">
+            <joint name="j4" axis="0 0 1" range="-3.0 3.0"/>
+            <geom type="cylinder" size="0.04 0.04" pos="0 0 0.02" material="joint"/>
+            <body name="wrist_pitch" pos="0 0 0.05" gravcomp="1">
+              <joint name="j5" axis="0 1 0" range="-2.0 2.0"/>
+              <geom type="capsule" fromto="0 0 0 0 0 0.05" size="0.038" material="link"/>
+              <body name="palm" pos="0 0 0.06" gravcomp="1">
+                <joint name="j6" axis="0 0 1" range="-3.0 3.0"/>
+                <!-- Palm is part of the HAND group: it stops on the table too. -->
+                <geom type="box" size="0.05 0.045 0.02" pos="0 0 0.01" material="grip"
+                      contype="4" conaffinity="3"/>
+                <site name="pinch" pos="0 0 0.075" size="0.006" rgba="0 1 0 0.6"/>
+                <!-- Parallel fingers: slide along ±y, extend along +z. -->
+                <body name="left_finger" pos="0 0.012 0.03">
+                  <joint name="grip_left" class="finger" axis="0 1 0"/>
+                  <geom type="box" size="0.01 0.012 0.028" pos="0 0 0.028"/>
+                </body>
+                <body name="right_finger" pos="0 -0.012 0.03">
+                  <joint name="grip_right" class="finger" axis="0 -1 0"/>
+                  <geom type="box" size="0.01 0.012 0.028" pos="0 0 0.028"/>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+
+    <!-- Pickable cube (free body), resting on the table. -->
+    <body name="cube" pos="0.5 0.0 0.43">
+      <freejoint name="cube_free"/>
+      <!-- OBJECT group: cube collides with the gripper/arm AND the floor/table. -->
+      <geom name="cube_geom" type="box" size="0.026 0.026 0.026" material="cube"
+            mass="0.05" friction="2.5 0.2 0.02" condim="4"
+            contype="2" conaffinity="5"/>
+    </body>
+  </worldbody>
+
+  <equality>
+    <!-- Inactive until the controller grasps; then rigidly holds the cube. -->
+    <weld name="grasp" body1="palm" body2="cube" active="false"/>
+  </equality>
+
+  <actuator>
+    <position name="a_j1" joint="j1"/>
+    <position name="a_j2" joint="j2"/>
+    <position name="a_j3" joint="j3"/>
+    <position name="a_j4" joint="j4"/>
+    <position name="a_j5" joint="j5"/>
+    <position name="a_j6" joint="j6"/>
+    <position name="a_grip_left"  class="finger" joint="grip_left"/>
+    <position name="a_grip_right" class="finger" joint="grip_right"/>
+  </actuator>
+
+  <keyframe>
+    <!-- Home: arm gently folded forward over the table, gripper open. -->
+    <key name="home"
+         qpos="0 0.6 0.9 0 0.6 0 0.04 0.04  0.5 0 0.43 1 0 0 0"
+         ctrl="0 0.6 0.9 0 0.6 0 0.04 0.04"/>
+  </keyframe>
+</mujoco>
