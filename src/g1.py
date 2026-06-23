@@ -29,7 +29,9 @@ import mujoco, mujoco.viewer
 
 from cadenza.go1 import Step  # reuse the same Step descriptor
 
-# G1 has no bundled scenes of its own yet; fall back to the Go1 library.
+# G1 ships its own scenes (with the 16-DOF G1 robot baked in); fall back to
+# the Go1 library only for scenes G1 doesn't provide.
+_G1_LIBRARY_DIR = Path(__file__).resolve().parent / "library" / "g1"
 _GO1_LIBRARY_DIR = Path(__file__).resolve().parent / "library" / "go1"
 
 
@@ -149,22 +151,31 @@ class G1:
     def _resolve_scene(self, scene: str | None) -> str | None:
         """Bundled scene name → XML path. Absolute paths pass through.
 
-        G1 ships no scenes of its own yet, so named scenes resolve against
-        the Go1 library (e.g. "stairs" → src/library/go1/scenes/stairs.xml).
+        Named scenes resolve against the G1 library (e.g. "stairs" →
+        src/library/g1/scenes/stairs.xml), which bakes in the 16-DOF G1
+        robot. The Go1 library is *not* a fallback: those scenes embed the
+        12-joint Go1 robot, so loading one for a G1 mismatches the G1 spec
+        (16 joints) and crashes in Sim._init_pose.
         """
         if scene is None:
             return self._xml_path
         p = Path(scene)
         if p.is_absolute() or p.exists():
             return str(p)
-        bundled = _GO1_LIBRARY_DIR / "scenes" / f"{scene}.xml"
+        bundled = _G1_LIBRARY_DIR / "scenes" / f"{scene}.xml"
         if bundled.exists():
             return str(bundled)
-        legacy = _GO1_LIBRARY_DIR / f"{scene}.xml"
-        if legacy.exists():
-            return str(legacy)
+        available = sorted(
+            f.stem for f in (_G1_LIBRARY_DIR / "scenes").glob("*.xml")
+        )
+        go1_only = (_GO1_LIBRARY_DIR / "scenes" / f"{scene}.xml").exists()
+        hint = (
+            f" (a Go1 scene named '{scene}' exists but embeds the Go1 robot, "
+            f"which is incompatible with the G1)" if go1_only else ""
+        )
         raise FileNotFoundError(
-            f"No bundled scene '{scene}' at {bundled} or {legacy}"
+            f"No G1 scene '{scene}' at {bundled}{hint}. "
+            f"Available G1 scenes: {available or 'none'}"
         )
 
     def _run_sequence(self, sequence: list):

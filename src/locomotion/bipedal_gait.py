@@ -206,10 +206,11 @@ class BipedalGaitEngine:
         q[_R_ELBOW] = g["elbow_base"] + g["elbow_swing"] * max(0.0, math.cos(phi))
 
         # ── Balance feedback (negative feedback for stability) ──
-        # Sign: body pitches forward (pitch>0) → REDUCE ankle dorsiflex → push back
-        #        body pitches backward (pitch<0) → INCREASE dorsiflex → push forward
+        # Cadenza's forward is -x, so a forward lean reads as a NEGATIVE
+        # _rpy pitch (see cadenza.sim._rpy). Negate it here so a forward
+        # lean (pitch_err>0) REDUCES ankle dorsiflex → pushes the body back.
         roll_err = float(body_rpy[0])
-        pitch_err = float(body_rpy[1])
+        pitch_err = -float(body_rpy[1])
 
         # Ankle pitch: primary pitch balance actuator
         q[_L_ANKLE_PITCH] -= pitch_err * 2.5
@@ -277,7 +278,7 @@ class BipedalGaitEngine:
         q = np.zeros(_N_JOINTS, dtype=np.float64)
         q[: len(self._stand)] = self._stand
         roll_err = float(body_rpy[0])
-        pitch_err = float(body_rpy[1])
+        pitch_err = -float(body_rpy[1])  # forward lean is -x => negative _rpy pitch
         q[_L_HIP_ROLL] -= roll_err * 0.5
         q[_R_HIP_ROLL] -= roll_err * 0.5
         q[_L_ANKLE_PITCH] -= pitch_err * 2.0
