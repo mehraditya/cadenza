@@ -63,19 +63,17 @@ go1.run([
 
 ### 🦾 G1 — humanoid
 
-The G1 walks forward with a trajectory-optimized bipedal gait, and stands
-and jumps under active balance stabilization.
+The G1 walks forward with a trajectory-optimized bipedal gait, comes to a
+balanced stop, then jumps — all under active balance stabilization.
 
 ```python
 import cadenza_lab as cadenza
 
 g1 = cadenza.g1()
-
-# trajectory-optimized forward walk
-g1.run([g1.walk_forward(distance_m=1.2)])
-
-# balance-stabilized stand + jump
-g1.run([g1.stand(), g1.jump()])
+g1.run([
+    g1.walk_forward(distance_m=1.0),  # walk, then settle to a stand
+    g1.jump(),                        # jump from the balanced stop
+])
 ```
 
 <p align="center">

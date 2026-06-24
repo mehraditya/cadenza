@@ -119,16 +119,25 @@ def _get_walk_traj():
     return _WALK_TRAJ_CACHE
 
 
+# Gait phases (indices into walk_ctrl) where the robot is in double support
+# with low forward velocity — the only places it can be brought to a clean
+# stop without toppling. Found empirically.
+_WALK_SAFE_STOPS = (1233, 1650)
+
+
 def _exec_walk(model, data, distance_m, viewer):
-    """Walk forward by replaying the trajectory-optimized gait.
+    """Walk forward, then come to a stand-still — all in continuous physics.
 
     ``walk_ctrl`` is an optimized open-loop motor trajectory. Open-loop
     playback only reproduces the gait from the exact state it was optimized
     from, so we seed the robot at ``walk_qpos[0]`` (the walk-ready crouch)
-    before stepping. Each stride covers ~0.4 m; playback is capped at the
-    stable open-loop horizon (~0.85 m). Beyond that, integration drift
-    accumulates — sustained walking would need a closed-loop balance
-    controller (tracked as follow-up).
+    before stepping (each stride covers ~0.4 m). We then replay only up to a
+    safe double-support phase and decelerate to a standing rest, so the robot
+    actually *stops* and the next action starts from a stable stand.
+
+    Sustained, longer-range walking would need a closed-loop balance
+    controller (tracked as follow-up); open-loop drift caps the usable
+    horizon at ~0.5 m before a clean stop.
 
     NOTE: seeding ``qpos`` is a deliberate one-time initialization for the
     replay (the rest of the library never teleports).
@@ -142,14 +151,16 @@ def _exec_walk(model, data, distance_m, viewer):
     data.qvel[:] = 0.0
     mujoco.mj_forward(model, data)
 
-    # Map requested distance → playback length. The first ~800 steps are an
-    # in-place windup; thereafter each 833-step stride advances ~0.4 m.
-    WINDUP, STRIDE_STEPS, STRIDE_M, STABLE_MAX = 800, 833, 0.40, 2200
+    # Map requested distance → a safe stop phase. The first ~800 steps are an
+    # in-place windup; thereafter each 833-step stride advances ~0.4 m. Snap
+    # to the furthest safe double-support phase within the request.
+    WINDUP, STRIDE_STEPS, STRIDE_M = 800, 833, 0.40
     want = WINDUP + int(max(0.0, distance_m) / STRIDE_M * STRIDE_STEPS)
-    n = min(STABLE_MAX, len(ctrl), max(1, want))
+    stop = max([s for s in _WALK_SAFE_STOPS if s <= want],
+               default=_WALK_SAFE_STOPS[0])
 
     steps_per_sync = max(1, int(1.0 / (_RENDER_HZ * _DT)))
-    for i in range(n):
+    for i in range(stop):
         if viewer and not viewer.is_running():
             return
         data.ctrl[:] = ctrl[i]
@@ -157,9 +168,12 @@ def _exec_walk(model, data, distance_m, viewer):
         if viewer and i % steps_per_sync == 0:
             # Camera follows the robot so it stays in frame while walking.
             viewer.cam.lookat[:] = [data.qpos[0], data.qpos[1],
-                                    max(float(data.qpos[2]) * 0.8, 0.4)]
+                                    max(float(data.qpos[2]) * 0.8, 0.45)]
             viewer.sync()
             _time.sleep(steps_per_sync * _DT)
+
+    # Decelerate to a standing rest (the "stop") so the gait ends balanced.
+    _exec_stand(model, data, 1.2, viewer)
 
 
 def _exec_jump(model, data, viewer):
