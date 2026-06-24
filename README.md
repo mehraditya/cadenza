@@ -63,8 +63,8 @@ go1.run([
 
 ### 🦾 G1 — humanoid
 
-The G1 stands, walks forward, crouches, and stands back up — balance-stabilized
-the whole way.
+The G1 stands and jumps under active balance stabilization, landing back on
+its feet each time.
 
 ```python
 import cadenza_lab as cadenza
@@ -72,8 +72,9 @@ import cadenza_lab as cadenza
 g1 = cadenza.g1()
 g1.run([
     g1.stand(),
-    g1.walk_forward(distance_m=1.5),
-    g1.crouch(),
+    g1.jump(),
+    g1.stand(),
+    g1.jump(),
     g1.stand(),
 ])
 ```

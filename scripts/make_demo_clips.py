@@ -112,15 +112,22 @@ def clip_go1():
 
 
 def clip_g1():
-    import cadenza_lab as cadenza
+    try:
+        import cadenza_lab as cadenza
+    except ImportError:
+        import cadenza
     g1 = cadenza.g1()
+    # Stand + jumps: the balance-stabilized behaviours that hold up on the
+    # current model. walk_forward / crouch need a dynamic balance controller
+    # (see g1_humanoid notes) and fall over, so they're not demoed here.
     _capture(lambda: g1.run([
         g1.stand(),
-        g1.walk_forward(distance_m=1.5),
-        g1.crouch(),
+        g1.jump(),
+        g1.stand(),
+        g1.jump(),
         g1.stand(),
     ], verbose=False),
-        every=24, max_frames=90, fps=20, name="g1")
+        every=9, max_frames=122, fps=20, name="g1")
 
 
 CLIPS = {"arm": clip_arm, "go1": clip_go1, "g1": clip_g1}
