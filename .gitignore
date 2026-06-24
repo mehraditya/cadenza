@@ -13,3 +13,11 @@ dist/
 cadenza_lab/
 uv.lock
 build/
+
+# Generated sim/run artifacts (procedural scenes, run logs)
+MUJOCO_LOG.TXT
+_cadenza_scene_*.xml
+*.cadenza-scene.xml
+chain_of_thought_field.xml
+chain_of_thought_run.jsonl
+sequential_run.jsonl
