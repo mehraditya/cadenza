@@ -39,12 +39,22 @@ class ArmAction:
     ``x``/``y``/``z`` are meaningful for ``move_to``/``pick``/``place`` (metres,
     in the arm's base frame); ignored by ``home``/``open_gripper``/
     ``close_gripper``.
+
+    ``speed`` is a velocity multiplier on the motion: ``1.0`` is the nominal
+    pace, ``2.0`` moves twice as fast, ``0.5`` half as fast. It is clamped to a
+    safe range by the controller.
+
+    For the compound actions ``pick`` and ``place``, ``speed`` may instead be a
+    ``dict`` mapping phase name → multiplier, so each sub-move runs at its own
+    speed (e.g. ``{"descend": 0.5, "lift": 2.0}``); phases left out default to
+    ``1.0``. The simple actions take a scalar ``speed`` only.
     """
 
     action_name: str
     x: float = 0.0
     y: float = 0.0
     z: float = 0.0
+    speed: float | dict[str, float] = 1.0
 
     @property
     def target(self) -> tuple[float, float, float]:
@@ -55,9 +65,16 @@ class ArmAction:
         return self.action_name in _CARTESIAN
 
     def __repr__(self) -> str:
+        if self.speed == 1.0:
+            spd = ""
+        elif isinstance(self.speed, dict):
+            spd = f", speed={self.speed}"
+        else:
+            spd = f", speed={self.speed:g}"
         if self.is_cartesian:
-            return f"ArmAction({self.action_name}, ({self.x:.3f}, {self.y:.3f}, {self.z:.3f}))"
-        return f"ArmAction({self.action_name})"
+            return (f"ArmAction({self.action_name}, "
+                    f"({self.x:.3f}, {self.y:.3f}, {self.z:.3f}){spd})")
+        return f"ArmAction({self.action_name}{spd})"
 
 
 @dataclass
