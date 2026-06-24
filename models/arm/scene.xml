@@ -123,6 +123,12 @@
                 <geom type="box" size="0.05 0.045 0.02" pos="0 0 0.01" material="grip"
                       contype="4" conaffinity="3"/>
                 <site name="pinch" pos="0 0 0.075" size="0.006" rgba="0 1 0 0.6"/>
+                <!-- Eye-in-hand visual sensor. Mounted on the palm and aimed down
+                     the gripper approach axis (palm local +z), so it always looks
+                     exactly where the hand is about to grasp. Sits just outside the
+                     palm box (+x side) to clear the fingers. Camera frame: -z is the
+                     view direction, so local +z = -z_palm (look +z_palm); up = +x. -->
+                <camera name="grip_cam" pos="0.06 0 0.0" xyaxes="0 1 0 1 0 0" fovy="60"/>
                 <!-- Parallel fingers: slide along ±y, extend along +z. -->
                 <body name="left_finger" pos="0 0.012 0.03">
                   <joint name="grip_left" class="finger" axis="0 1 0"/>

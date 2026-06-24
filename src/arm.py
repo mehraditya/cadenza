@@ -289,8 +289,14 @@ class Arm:
     # ── Run ────────────────────────────────────────────────────────────────────
 
     def run(self, sequence: list, *, headless: bool = False,
-            realtime: bool = True, verbose: bool = True) -> "Arm":
-        """Execute a sequence of arm actions in MuJoCo (rendered by default)."""
+            realtime: bool = True, verbose: bool = True,
+            camera: bool = True) -> "Arm":
+        """Execute a sequence of arm actions in MuJoCo (rendered by default).
+
+        When ``camera`` is True (and not headless), a live window shows the
+        eye-in-hand ``grip_cam`` — the arm's onboard view down the grasp axis —
+        updating in real time as the arm moves. Pass ``camera=False`` to hide it.
+        """
         steps = [s if isinstance(s, ArmAction) else ArmAction(s) for s in sequence]
         rt = _Runtime(self._xml_path)
 
@@ -301,8 +307,10 @@ class Arm:
             return self
 
         import mujoco.viewer
+        from cadenza.sensor_view import make_view
         if verbose:
             print(f"\n  Cadenza Arm  |  {len(steps)} steps\n")
+        view = make_view("arm", enabled=camera)
         with mujoco.viewer.launch_passive(rt.model, rt.data) as viewer:
             dist, azi, elev = self._cam
             viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = dist, azi, elev
@@ -311,16 +319,21 @@ class Arm:
             def render():
                 if viewer.is_running():
                     viewer.sync()
+                    view.maybe_update(rt.model, rt.data)
                     if realtime:
                         time.sleep(rt.model.opt.timestep)
 
-            self._execute(rt, steps, render=render, verbose=verbose)
-            if verbose:
-                print("\n  Done. Close viewer to exit.")
-            while viewer.is_running():
-                mujoco.mj_step(rt.model, rt.data)
-                viewer.sync()
-                time.sleep(0.02)
+            try:
+                self._execute(rt, steps, render=render, verbose=verbose)
+                if verbose:
+                    print("\n  Done. Close viewer to exit.")
+                while viewer.is_running():
+                    mujoco.mj_step(rt.model, rt.data)
+                    viewer.sync()
+                    view.maybe_update(rt.model, rt.data)
+                    time.sleep(0.02)
+            finally:
+                view.close()
         return self
 
     def _execute(self, rt: _Runtime, steps: list, render, verbose: bool) -> None:

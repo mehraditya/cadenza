@@ -102,8 +102,12 @@ class G1:
             model=None, sense=None,
             max_iterations: int = 250,
             headless: bool = False,
-            verbose: bool = True):
+            verbose: bool = True,
+            camera: bool = True):
         """Execute a sequence of actions, or drive a goal with a world model.
+
+        When ``camera`` is True, a live window shows the G1's onboard forward
+        camera (``head_cam``) updating in real time as it moves.
 
         Two shapes:
 
@@ -127,7 +131,7 @@ class G1:
             raise TypeError(
                 "G1.run() requires either a list of Steps or goal='...'"
             )
-        return self._run_sequence(sequence)
+        return self._run_sequence(sequence, camera=camera)
 
     def _run_goal(self, *, goal, scene, target, on, model, sense,
                   max_iterations, headless, verbose):
@@ -178,7 +182,7 @@ class G1:
             f"Available G1 scenes: {available or 'none'}"
         )
 
-    def _run_sequence(self, sequence: list):
+    def _run_sequence(self, sequence: list, camera: bool = True):
         """Execute actions in MuJoCo. Continuous physics, no teleporting."""
         from cadenza.g1_gait import (
             setup_model, _exec_stand, _exec_crouch,
@@ -190,36 +194,48 @@ class G1:
 
         print(f"\n  Cadenza G1  |  {len(steps)} steps\n")
 
+        # Live onboard forward-camera window (head_cam), updated as G1 moves.
+        view = None
+        if camera:
+            from cadenza.sensor_view import make_view
+            view = make_view("g1", enabled=True)
+
         with mujoco.viewer.launch_passive(model, data) as viewer:
             viewer.cam.distance = self._cam_distance
             viewer.cam.elevation = self._cam_elevation
             viewer.cam.azimuth = self._cam_azimuth
 
-            for i, step in enumerate(steps):
-                if not viewer.is_running():
-                    break
+            try:
+                for i, step in enumerate(steps):
+                    if not viewer.is_running():
+                        break
 
-                print(f"  [{i+1}/{len(steps)}] {step.name}", end="")
-                if step.distance_m > 0:
-                    print(f"  {step.distance_m}m", end="")
-                print()
+                    print(f"  [{i+1}/{len(steps)}] {step.name}", end="")
+                    if step.distance_m > 0:
+                        print(f"  {step.distance_m}m", end="")
+                    print()
 
-                if step.name == "stand":
-                    _exec_stand(model, data, step.speed, viewer)
-                elif step.name == "crouch":
-                    _exec_crouch(model, data, step.speed, viewer)
-                elif step.name == "walk_forward":
-                    _exec_walk(model, data, step.distance_m or 1.0, viewer)
-                elif step.name == "jump":
-                    _exec_jump(model, data, viewer)
-                elif step.name == "hold":
-                    _hold(model, data, step.speed, viewer)
+                    if step.name == "stand":
+                        _exec_stand(model, data, step.speed, viewer, view=view)
+                    elif step.name == "crouch":
+                        _exec_crouch(model, data, step.speed, viewer, view=view)
+                    elif step.name == "walk_forward":
+                        _exec_walk(model, data, step.distance_m or 1.0, viewer, view=view)
+                    elif step.name == "jump":
+                        _exec_jump(model, data, viewer, view=view)
+                    elif step.name == "hold":
+                        _hold(model, data, step.speed, viewer, view=view)
 
-            print("\n  Done. Close viewer to exit.")
-            while viewer.is_running():
-                mujoco.mj_step(model, data)
-                viewer.sync()
-                time.sleep(0.02)
+                print("\n  Done. Close viewer to exit.")
+                while viewer.is_running():
+                    mujoco.mj_step(model, data)
+                    viewer.sync()
+                    if view is not None:
+                        view.maybe_update(model, data)
+                    time.sleep(0.02)
+            finally:
+                if view is not None:
+                    view.close()
 
     # ── Deploy ───────────────────────────────────────────────────────────
 

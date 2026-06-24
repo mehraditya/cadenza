@@ -21,3 +21,4 @@ _cadenza_scene_*.xml
 chain_of_thought_field.xml
 chain_of_thought_run.jsonl
 sequential_run.jsonl
+.claude/

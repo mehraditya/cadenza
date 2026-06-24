@@ -84,6 +84,12 @@
       <!-- Head marker — bright green sphere at front (-x end) so "forward" is obvious -->
       <geom name="head_marker" type="sphere" size="0.03" pos="-0.22 0 0.04"
             rgba="0.1 0.95 0.3 1" contype="0" conaffinity="0" mass="0.001"/>
+      <!-- Forward-facing visual sensor, mounted in the head (FRONT = -x), looking
+           forward along -x with world-up as image-up. This is the onboard RGB
+           camera the VLA Guardian and the live sensor window see through.
+           Camera frame: -z is the view direction, so local +z = +x (look -x);
+           up (+y_cam) = +z (world up); right (+x_cam) = +y. -->
+      <camera name="head_cam" pos="-0.24 0 0.06" xyaxes="0 1 0 0 0 1" fovy="70"/>
 
       <!-- ── FL leg ──────────────────────────────────────────────────── -->
       <body name="FL_hip" pos="0.1881 0.0472 0">

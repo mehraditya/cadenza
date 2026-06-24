@@ -184,6 +184,12 @@
             <geom pos="0.0039635 0 -0.044" quat="1 0 0 0" class="visual" material="black" mesh="head_link"/>
             <geom pos="0.0039635 0 -0.044" quat="1 0 0 0" class="collision" material="black" mesh="head_link"/>
             <site name="imu_in_torso" pos="-0.03959 -0.00224 0.14792" size="0.01"/>
+            <!-- Forward-facing visual sensor, mounted in the head looking forward
+                 (Cadenza forward = -x) with world-up as image-up. This is the
+                 onboard RGB camera the live sensor window sees through.
+                 Camera frame: -z is the view direction, so local +z = +x (look -x);
+                 up (+y_cam) = +z; right (+x_cam) = +y. -->
+            <camera name="head_cam" pos="-0.06 0 0.22" xyaxes="0 1 0 0 0 1" fovy="70"/>
             <body name="left_shoulder_pitch_link" pos="0.0039563 0.10022 0.24778"
               quat="0.990264 0.139201 1.38722e-05 -9.86868e-05">
               <inertial pos="0 0.035892 -0.011628" quat="0.654152 0.0130458 -0.326267 0.68225" mass="0.718"

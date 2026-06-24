@@ -28,7 +28,7 @@ def list_actions_cmd(robot: str):
 
 
 @cli.command()
-@click.argument("robot", type=click.Choice(["go1", "go2", "g1"]))
+@click.argument("robot", type=click.Choice(["go1", "go2", "g1", "arm"]))
 @click.argument("command")
 @click.option("--disturbance", "-d", type=float, default=None,
               help="Enable DisturbanceEngine with temperature 0.0–1.0 (e.g. -d 0.5)")
@@ -36,13 +36,18 @@ def list_actions_cmd(robot: str):
               help="Enable VLA guardian for obstacle avoidance (uses SmolVLM-256M)")
 @click.option("--obstacles", is_flag=True, default=False,
               help="Use obstacle course scene (boxes in the path)")
-def sim(robot: str, command: str, disturbance: float | None, vla: bool, obstacles: bool):
+@click.option("--camera/--no-camera", default=True,
+              help="Show a live window of the robot's onboard sensor camera "
+                   "(default on)")
+def sim(robot: str, command: str, disturbance: float | None, vla: bool,
+        obstacles: bool, camera: bool):
     """Simulate actions in MuJoCo.
 
     \b
     Examples:
         cadenza sim go1 "walk forward then jump"
         cadenza sim g1 "stand then walk forward"
+        cadenza sim arm "pick the cube"                 # eye-in-hand grip_cam
         cadenza sim go1 "walk forward" -d 0.5           # with disturbances
         cadenza sim go1 "walk forward 5 meters" --vla   # with VLA obstacle avoidance
         cadenza sim go1 "walk forward 5 meters" --vla --obstacles
@@ -60,13 +65,13 @@ def sim(robot: str, command: str, disturbance: float | None, vla: bool, obstacle
             parser = CommandParser(robot)
             calls = parser.parse(command)
             steps = [go1._call_to_step(c) for c in calls]
-            go1.run(steps, vla=True)
+            go1.run(steps, vla=True, camera=camera)
         else:
             from cadenza.sim import Sim
             s = Sim(robot, xml_path=xml_path, disturbance=disturbance)
             if disturbance is not None:
                 click.echo(f"  DisturbanceEngine ON (temperature={disturbance})")
-            s.run(command)
+            s.run(command, camera=camera)
     elif robot == "g1":
         from cadenza.g1 import G1
         from cadenza.parser import CommandParser
@@ -74,7 +79,21 @@ def sim(robot: str, command: str, disturbance: float | None, vla: bool, obstacle
         parser = CommandParser(robot)
         calls = parser.parse(command)
         steps = [g1._call_to_step(c) for c in calls]
-        g1.run(steps)
+        g1.run(steps, camera=camera)
+    elif robot == "arm":
+        # The arm is Cartesian, not gait/NL-driven, so there is no parser: run a
+        # pick-and-place demo on the table cube. The point here is to watch the
+        # eye-in-hand grip_cam look straight at the cube as the hand descends and
+        # grasps — `command` is shown for context but does not change the motion.
+        from cadenza.arm import Arm
+        a = Arm()
+        click.echo(f"  arm demo (grip_cam live): {command!r}")
+        a.run([
+            a.home(),
+            a.pick(0.5, 0.0, 0.45),     # the cube on the table
+            a.place(0.32, 0.22, 0.45),  # set it down to the side
+            a.home(),
+        ], camera=camera)
 
 
 @cli.group("action")
