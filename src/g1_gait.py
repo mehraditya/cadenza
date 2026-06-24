@@ -105,37 +105,61 @@ def _exec_crouch(model, data, duration, viewer):
     _hold(model, data, 0.5, viewer)
 
 
+_WALK_TRAJ_CACHE = None
+
+
+def _get_walk_traj():
+    """Load (and cache) the trajectory-optimized walk: per-step qpos + ctrl."""
+    global _WALK_TRAJ_CACHE
+    if _WALK_TRAJ_CACHE is None:
+        _WALK_TRAJ_CACHE = {
+            "qpos": np.load(str(_DATA_DIR / "walk_qpos.npy")),
+            "ctrl": np.load(str(_DATA_DIR / "walk_ctrl.npy")),
+        }
+    return _WALK_TRAJ_CACHE
+
+
 def _exec_walk(model, data, distance_m, viewer):
-    """Walk forward by evaluating gait splines on motors."""
+    """Walk forward by replaying the trajectory-optimized gait.
+
+    ``walk_ctrl`` is an optimized open-loop motor trajectory. Open-loop
+    playback only reproduces the gait from the exact state it was optimized
+    from, so we seed the robot at ``walk_qpos[0]`` (the walk-ready crouch)
+    before stepping. Each stride covers ~0.4 m; playback is capped at the
+    stable open-loop horizon (~0.85 m). Beyond that, integration drift
+    accumulates — sustained walking would need a closed-loop balance
+    controller (tracked as follow-up).
+
+    NOTE: seeding ``qpos`` is a deliberate one-time initialization for the
+    replay (the rest of the library never teleports).
+    """
     import mujoco
-    sp = _get_splines()
+    traj = _get_walk_traj()
+    qpos, ctrl = traj["qpos"], traj["ctrl"]
 
-    _blend(model, data, sp['walk_pose'], 1.0, viewer)
+    # Seed the walk-ready start state — required for open-loop replay.
+    data.qpos[:] = qpos[0]
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
 
-    start_x = float(data.qpos[0])
-    frame = 0
+    # Map requested distance → playback length. The first ~800 steps are an
+    # in-place windup; thereafter each 833-step stride advances ~0.4 m.
+    WINDUP, STRIDE_STEPS, STRIDE_M, STABLE_MAX = 800, 833, 0.40, 2200
+    want = WINDUP + int(max(0.0, distance_m) / STRIDE_M * STRIDE_STEPS)
+    n = min(STABLE_MAX, len(ctrl), max(1, want))
+
     steps_per_sync = max(1, int(1.0 / (_RENDER_HZ * _DT)))
-    max_frames = int(60.0 / _DT)
-
-    while abs(float(data.qpos[0]) - start_x) < distance_m and frame < max_frames:
+    for i in range(n):
         if viewer and not viewer.is_running():
             return
-        t = frame * _DT
-        for j in range(min(len(data.ctrl), sp['nv'] - 6)):
-            data.ctrl[j] = _eval_spline(sp['sx'][6+j], sp['sc'][6+j], t)
+        data.ctrl[:] = ctrl[i]
         mujoco.mj_step(model, data)
-        if viewer and frame % steps_per_sync == 0:
+        if viewer and i % steps_per_sync == 0:
+            # Camera follows the robot so it stays in frame while walking.
+            viewer.cam.lookat[:] = [data.qpos[0], data.qpos[1],
+                                    max(float(data.qpos[2]) * 0.8, 0.4)]
             viewer.sync()
             _time.sleep(steps_per_sync * _DT)
-        frame += 1
-
-    # Smooth exit: blend to walk pose + gradually correct yaw
-    yaw = _get_yaw(data)
-    exit_pose = sp['walk_pose'].copy()
-    exit_pose[2] = -yaw  # L hip yaw
-    exit_pose[8] = -yaw  # R hip yaw
-    _blend(model, data, exit_pose, 1.5, viewer)
-    _hold(model, data, 0.5, viewer)
 
 
 def _exec_jump(model, data, viewer):
