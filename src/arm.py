@@ -55,6 +55,26 @@ _TABLE_CLEARANCE = _FINGERTIP_BELOW_PINCH + _SURFACE_MARGIN
 # Desired top-down gripper orientation (palm +z pointing world -z): Rx(pi).
 _Q_DOWN = np.array([0.0, 1.0, 0.0, 0.0])
 
+# Speed control. Motions ramp their command from the current pose to the target
+# over a number of physics steps; ``speed`` scales that step count inversely
+# (faster speed → fewer steps → higher velocity). It is clamped so a runaway
+# value can't snap the servo or stall the arm. ``_CONVERGE`` is a short fixed
+# hold at the target after the ramp so the pose is reached regardless of speed.
+_SPEED_MIN, _SPEED_MAX = 0.1, 8.0
+_CONVERGE = 120
+
+# Sub-move phases of the compound actions, in execution order. ``pick``/``place``
+# accept a ``speed`` dict keyed by these names so each phase runs at its own pace.
+_PICK_PHASES = ("approach", "descend", "grasp", "lift")
+_PLACE_PHASES = ("carry", "lower", "release", "retract")
+
+
+def _speed_for(speed, phase: str) -> float:
+    """Resolve the multiplier for one phase from a scalar or per-phase dict."""
+    if isinstance(speed, dict):
+        return float(speed.get(phase, 1.0))
+    return float(speed)
+
 
 class _Runtime:
     """The live MuJoCo session: IK, motion, and grasp for one run."""
@@ -130,12 +150,28 @@ class _Runtime:
 
     # ── Motion primitives ─────────────────────────────────────────────────────
 
-    def move_joints(self, qarm: np.ndarray, settle: int = 500, render=None) -> float:
-        """Command the arm joints and let the PD servo settle; returns cart error."""
-        self.data.ctrl[:6] = qarm
+    def move_joints(self, qarm: np.ndarray, settle: int = 500, render=None,
+                    speed: float = 1.0) -> float:
+        """Ramp the arm joints to ``qarm`` at ``speed``; returns final joint error.
+
+        The command is interpolated from the current pose to ``qarm`` over
+        ``settle / speed`` steps, giving the motion a finite, speed-scaled
+        velocity, then held at the target for ``_CONVERGE`` steps so the servo
+        settles whatever the speed.
+        """
+        speed = float(np.clip(speed, _SPEED_MIN, _SPEED_MAX))
+        q0 = self.data.qpos[:6].copy()
+        travel = max(1, int(round(settle / speed)))
         self.data.ctrl[6] = self._grip
         self.data.ctrl[7] = self._grip
-        for _ in range(settle):
+        for k in range(1, travel + 1):
+            a = k / travel
+            self.data.ctrl[:6] = (1.0 - a) * q0 + a * qarm
+            mujoco.mj_step(self.model, self.data)
+            if render is not None:
+                render()
+        self.data.ctrl[:6] = qarm
+        for _ in range(_CONVERGE):
             mujoco.mj_step(self.model, self.data)
             if render is not None:
                 render()
@@ -184,14 +220,22 @@ class _Runtime:
             q = self._ik(t)
         return q
 
-    def move_to(self, target, settle: int = 500, render=None) -> float:
-        return self.move_joints(self._solve_above_surface(target), settle, render)
+    def move_to(self, target, settle: int = 500, render=None,
+                speed: float = 1.0) -> float:
+        return self.move_joints(self._solve_above_surface(target), settle,
+                                render, speed)
 
-    def set_grip(self, opening: float, settle: int = 150, render=None) -> None:
+    def set_grip(self, opening: float, settle: int = 150, render=None,
+                 speed: float = 1.0) -> None:
+        speed = float(np.clip(speed, _SPEED_MIN, _SPEED_MAX))
+        g0 = self._grip
         self._grip = float(opening)
-        self.data.ctrl[6] = self._grip
-        self.data.ctrl[7] = self._grip
-        for _ in range(settle):
+        travel = max(1, int(round(settle / speed)))
+        for k in range(1, travel + 1):
+            a = k / travel
+            g = (1.0 - a) * g0 + a * self._grip
+            self.data.ctrl[6] = g
+            self.data.ctrl[7] = g
             mujoco.mj_step(self.model, self.data)
             if render is not None:
                 render()
@@ -251,28 +295,55 @@ class Arm:
 
     # ── Action methods (return descriptors, no execution) ─────────────────────
 
-    def home(self) -> ArmAction:
-        return ArmAction("home")
+    def home(self, *, speed: float = 1.0) -> ArmAction:
+        return ArmAction("home", speed=speed)
 
-    def move_to(self, x, y=None, z=None) -> ArmAction:
+    def move_to(self, x, y=None, z=None, *, speed: float = 1.0) -> ArmAction:
         x, y, z = self._xyz(x, y, z)
-        return ArmAction("move_to", x, y, z)
+        return ArmAction("move_to", x, y, z, speed=speed)
 
-    def open_gripper(self) -> ArmAction:
-        return ArmAction("open_gripper")
+    def open_gripper(self, *, speed: float = 1.0) -> ArmAction:
+        return ArmAction("open_gripper", speed=speed)
 
-    def close_gripper(self) -> ArmAction:
-        return ArmAction("close_gripper")
+    def close_gripper(self, *, speed: float = 1.0) -> ArmAction:
+        return ArmAction("close_gripper", speed=speed)
 
-    def pick(self, x, y=None, z=None) -> ArmAction:
-        """Pick up the object at a location (x, y, z) in the arm's base frame."""
+    def pick(self, x, y=None, z=None, *,
+             speed: float | dict[str, float] = 1.0) -> ArmAction:
+        """Pick up the object at a location (x, y, z) in the arm's base frame.
+
+        ``speed`` scales the motion. Pass a float to set every phase, or a dict
+        to set them individually — phases: ``approach``, ``descend``, ``grasp``,
+        ``lift`` (omitted phases default to ``1.0``)::
+
+            arm.pick((0.5, 0, 0.43), speed={"descend": 0.5, "lift": 2.0})
+        """
         x, y, z = self._xyz(x, y, z)
-        return ArmAction("pick", x, y, z)
+        self._check_phase_speed(speed, _PICK_PHASES, "pick")
+        return ArmAction("pick", x, y, z, speed=speed)
 
-    def place(self, x, y=None, z=None) -> ArmAction:
-        """Place the held object down at a location (x, y, z)."""
+    def place(self, x, y=None, z=None, *,
+              speed: float | dict[str, float] = 1.0) -> ArmAction:
+        """Place the held object down at a location (x, y, z).
+
+        ``speed`` scales the motion. Pass a float to set every phase, or a dict
+        to set them individually — phases: ``carry``, ``lower``, ``release``,
+        ``retract`` (omitted phases default to ``1.0``)::
+
+            arm.place((0.4, 0.22, 0.43), speed={"lower": 0.5})
+        """
         x, y, z = self._xyz(x, y, z)
-        return ArmAction("place", x, y, z)
+        self._check_phase_speed(speed, _PLACE_PHASES, "place")
+        return ArmAction("place", x, y, z, speed=speed)
+
+    @staticmethod
+    def _check_phase_speed(speed, phases, action: str) -> None:
+        if isinstance(speed, dict):
+            unknown = set(speed) - set(phases)
+            if unknown:
+                raise ValueError(
+                    f"Unknown {action} phase(s) {sorted(unknown)}; "
+                    f"valid phases: {list(phases)}")
 
     @staticmethod
     def _xyz(x, y, z):
@@ -289,8 +360,14 @@ class Arm:
     # ── Run ────────────────────────────────────────────────────────────────────
 
     def run(self, sequence: list, *, headless: bool = False,
-            realtime: bool = True, verbose: bool = True) -> "Arm":
-        """Execute a sequence of arm actions in MuJoCo (rendered by default)."""
+            realtime: bool = True, verbose: bool = True,
+            camera: bool = True) -> "Arm":
+        """Execute a sequence of arm actions in MuJoCo (rendered by default).
+
+        When ``camera`` is True (and not headless), a live window shows the
+        eye-in-hand ``grip_cam`` — the arm's onboard view down the grasp axis —
+        updating in real time as the arm moves. Pass ``camera=False`` to hide it.
+        """
         steps = [s if isinstance(s, ArmAction) else ArmAction(s) for s in sequence]
         rt = _Runtime(self._xml_path)
 
@@ -301,8 +378,10 @@ class Arm:
             return self
 
         import mujoco.viewer
+        from cadenza.sensor_view import make_view
         if verbose:
             print(f"\n  Cadenza Arm  |  {len(steps)} steps\n")
+        view = make_view("arm", enabled=camera)
         with mujoco.viewer.launch_passive(rt.model, rt.data) as viewer:
             dist, azi, elev = self._cam
             viewer.cam.distance, viewer.cam.azimuth, viewer.cam.elevation = dist, azi, elev
@@ -311,55 +390,69 @@ class Arm:
             def render():
                 if viewer.is_running():
                     viewer.sync()
+                    view.maybe_update(rt.model, rt.data)
                     if realtime:
                         time.sleep(rt.model.opt.timestep)
 
-            self._execute(rt, steps, render=render, verbose=verbose)
-            if verbose:
-                print("\n  Done. Close viewer to exit.")
-            while viewer.is_running():
-                mujoco.mj_step(rt.model, rt.data)
-                viewer.sync()
-                time.sleep(0.02)
+            try:
+                self._execute(rt, steps, render=render, verbose=verbose)
+                if verbose:
+                    print("\n  Done. Close viewer to exit.")
+                while viewer.is_running():
+                    mujoco.mj_step(rt.model, rt.data)
+                    viewer.sync()
+                    view.maybe_update(rt.model, rt.data)
+                    time.sleep(0.02)
+            finally:
+                view.close()
         return self
 
     def _execute(self, rt: _Runtime, steps: list, render, verbose: bool) -> None:
         for i, step in enumerate(steps):
             if verbose:
                 tgt = f"  ({step.x:.2f}, {step.y:.2f}, {step.z:.2f})" if step.is_cartesian else ""
-                print(f"  [{i+1}/{len(steps)}] {step.action_name}{tgt}")
+                if step.speed == 1.0:
+                    spd = ""
+                elif isinstance(step.speed, dict):
+                    spd = f"  @{step.speed}"
+                else:
+                    spd = f"  @{step.speed:g}x"
+                print(f"  [{i+1}/{len(steps)}] {step.action_name}{tgt}{spd}")
             self._run_one(rt, step, render)
 
     def _run_one(self, rt: _Runtime, step: ArmAction, render) -> None:
         name = step.action_name
+        spd = step.speed
         if name == "home":
             if rt.model.nkey > 0:
-                rt.move_joints(rt.model.key_qpos[0][:6], render=render)
-            rt.set_grip(_GRIP_OPEN, render=render)
+                rt.move_joints(rt.model.key_qpos[0][:6], render=render, speed=spd)
+            rt.set_grip(_GRIP_OPEN, render=render, speed=spd)
         elif name == "open_gripper":
-            rt.set_grip(_GRIP_OPEN, render=render)
+            rt.set_grip(_GRIP_OPEN, render=render, speed=spd)
         elif name == "close_gripper":
-            rt.set_grip(_GRIP_CLOSED, render=render)
+            rt.set_grip(_GRIP_CLOSED, render=render, speed=spd)
         elif name == "move_to":
-            rt.move_to(step.target, render=render)
+            rt.move_to(step.target, render=render, speed=spd)
         elif name == "pick":
-            self._pick(rt, np.asarray(step.target, float), render)
+            self._pick(rt, np.asarray(step.target, float), render, spd)
         elif name == "place":
-            self._place(rt, np.asarray(step.target, float), render)
+            self._place(rt, np.asarray(step.target, float), render, spd)
         else:
             raise ValueError(f"Unknown arm action {name!r}")
 
-    def _pick(self, rt: _Runtime, loc: np.ndarray, render) -> None:
-        rt.set_grip(_GRIP_OPEN, settle=80, render=render)
-        rt.move_to(loc + [0, 0, _HOVER], render=render)   # approach above
-        rt.move_to(loc, render=render)                    # descend onto object
-        rt.grasp()                                         # weld on
-        rt.set_grip(_GRIP_CLOSED, render=render)           # close fingers
-        rt.move_to(loc + [0, 0, _LIFT], render=render)     # lift
+    def _pick(self, rt: _Runtime, loc: np.ndarray, render, speed=1.0) -> None:
+        sp = lambda phase: _speed_for(speed, phase)
+        rt.set_grip(_GRIP_OPEN, settle=80, render=render, speed=sp("approach"))
+        rt.move_to(loc + [0, 0, _HOVER], render=render, speed=sp("approach"))  # approach above
+        rt.move_to(loc, render=render, speed=sp("descend"))                    # descend onto object
+        rt.grasp()                                                             # weld on
+        rt.set_grip(_GRIP_CLOSED, render=render, speed=sp("grasp"))            # close fingers
+        rt.move_to(loc + [0, 0, _LIFT], render=render, speed=sp("lift"))       # lift
 
-    def _place(self, rt: _Runtime, loc: np.ndarray, render) -> None:
-        rt.move_to(loc + [0, 0, _LIFT], render=render)     # carry above
-        rt.move_to(loc, render=render)                     # lower to surface
-        rt.release()                                       # weld off
-        rt.set_grip(_GRIP_OPEN, render=render)             # open fingers
-        rt.move_to(loc + [0, 0, _HOVER], render=render)    # retract
+    def _place(self, rt: _Runtime, loc: np.ndarray, render, speed=1.0) -> None:
+        sp = lambda phase: _speed_for(speed, phase)
+        rt.move_to(loc + [0, 0, _LIFT], render=render, speed=sp("carry"))      # carry above
+        rt.move_to(loc, render=render, speed=sp("lower"))                      # lower to surface
+        rt.release()                                                           # weld off
+        rt.set_grip(_GRIP_OPEN, render=render, speed=sp("release"))            # open fingers
+        rt.move_to(loc + [0, 0, _HOVER], render=render, speed=sp("retract"))   # retract

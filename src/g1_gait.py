@@ -61,7 +61,8 @@ def _compensated_ctrl(target, data):
     return ctrl
 
 
-def _blend(model, data, target, duration, viewer=None, compensate_yaw=False):
+def _blend(model, data, target, duration, viewer=None, compensate_yaw=False,
+           view=None):
     """Smoothly drive ctrl from current to target. Pure motor commands."""
     import mujoco
     start = data.ctrl[:29].copy()
@@ -74,10 +75,12 @@ def _blend(model, data, target, duration, viewer=None, compensate_yaw=False):
         mujoco.mj_step(model, data)
         if viewer and i % steps_per_sync == 0:
             viewer.sync()
+            if view is not None:
+                view.maybe_update(model, data)
             _time.sleep(steps_per_sync * _DT)
 
 
-def _hold(model, data, duration, viewer=None, compensate_yaw=False):
+def _hold(model, data, duration, viewer=None, compensate_yaw=False, view=None):
     """Hold current target steady."""
     import mujoco
     target = data.ctrl[:29].copy()
@@ -87,58 +90,100 @@ def _hold(model, data, duration, viewer=None, compensate_yaw=False):
         mujoco.mj_step(model, data)
         if viewer and i % steps_per_sync == 0:
             viewer.sync()
+            if view is not None:
+                view.maybe_update(model, data)
             _time.sleep(steps_per_sync * _DT)
 
 
 # ── Action executors ────────────────────────────────────────────────────────
 
-def _exec_stand(model, data, duration, viewer):
+def _exec_stand(model, data, duration, viewer, view=None):
     """Smoothly drive to standing."""
-    _blend(model, data, np.zeros(29), duration, viewer)
-    _hold(model, data, 1.0, viewer)
+    _blend(model, data, np.zeros(29), duration, viewer, view=view)
+    _hold(model, data, 1.0, viewer, view=view)
 
 
-def _exec_crouch(model, data, duration, viewer):
+def _exec_crouch(model, data, duration, viewer, view=None):
     """Smoothly bend to walk-ready position."""
     sp = _get_splines()
-    _blend(model, data, sp['walk_pose'], duration, viewer)
-    _hold(model, data, 0.5, viewer)
+    _blend(model, data, sp['walk_pose'], duration, viewer, view=view)
+    _hold(model, data, 0.5, viewer, view=view)
 
 
-def _exec_walk(model, data, distance_m, viewer):
-    """Walk forward by evaluating gait splines on motors."""
+_WALK_TRAJ_CACHE = None
+
+
+def _get_walk_traj():
+    """Load (and cache) the trajectory-optimized walk: per-step qpos + ctrl."""
+    global _WALK_TRAJ_CACHE
+    if _WALK_TRAJ_CACHE is None:
+        _WALK_TRAJ_CACHE = {
+            "qpos": np.load(str(_DATA_DIR / "walk_qpos.npy")),
+            "ctrl": np.load(str(_DATA_DIR / "walk_ctrl.npy")),
+        }
+    return _WALK_TRAJ_CACHE
+
+
+# Gait phases (indices into walk_ctrl) where the robot is in double support
+# with low forward velocity — the only places it can be brought to a clean
+# stop without toppling. Found empirically.
+_WALK_SAFE_STOPS = (1233, 1650)
+
+
+def _exec_walk(model, data, distance_m, viewer, view=None):
+    """Walk forward, then come to a stand-still — all in continuous physics.
+
+    ``walk_ctrl`` is an optimized open-loop motor trajectory. Open-loop
+    playback only reproduces the gait from the exact state it was optimized
+    from, so we seed the robot at ``walk_qpos[0]`` (the walk-ready crouch)
+    before stepping (each stride covers ~0.4 m). We then replay only up to a
+    safe double-support phase and decelerate to a standing rest, so the robot
+    actually *stops* and the next action starts from a stable stand.
+
+    Sustained, longer-range walking would need a closed-loop balance
+    controller (tracked as follow-up); open-loop drift caps the usable
+    horizon at ~0.5 m before a clean stop.
+
+    NOTE: seeding ``qpos`` is a deliberate one-time initialization for the
+    replay (the rest of the library never teleports).
+    """
     import mujoco
-    sp = _get_splines()
+    traj = _get_walk_traj()
+    qpos, ctrl = traj["qpos"], traj["ctrl"]
 
-    _blend(model, data, sp['walk_pose'], 1.0, viewer)
+    # Seed the walk-ready start state — required for open-loop replay.
+    data.qpos[:] = qpos[0]
+    data.qvel[:] = 0.0
+    mujoco.mj_forward(model, data)
 
-    start_x = float(data.qpos[0])
-    frame = 0
+    # Map requested distance → a safe stop phase. The first ~800 steps are an
+    # in-place windup; thereafter each 833-step stride advances ~0.4 m. Snap
+    # to the furthest safe double-support phase within the request.
+    WINDUP, STRIDE_STEPS, STRIDE_M = 800, 833, 0.40
+    want = WINDUP + int(max(0.0, distance_m) / STRIDE_M * STRIDE_STEPS)
+    stop = max([s for s in _WALK_SAFE_STOPS if s <= want],
+               default=_WALK_SAFE_STOPS[0])
+
     steps_per_sync = max(1, int(1.0 / (_RENDER_HZ * _DT)))
-    max_frames = int(60.0 / _DT)
-
-    while abs(float(data.qpos[0]) - start_x) < distance_m and frame < max_frames:
+    for i in range(stop):
         if viewer and not viewer.is_running():
             return
-        t = frame * _DT
-        for j in range(min(len(data.ctrl), sp['nv'] - 6)):
-            data.ctrl[j] = _eval_spline(sp['sx'][6+j], sp['sc'][6+j], t)
+        data.ctrl[:] = ctrl[i]
         mujoco.mj_step(model, data)
-        if viewer and frame % steps_per_sync == 0:
+        if viewer and i % steps_per_sync == 0:
+            # Camera follows the robot so it stays in frame while walking.
+            viewer.cam.lookat[:] = [data.qpos[0], data.qpos[1],
+                                    max(float(data.qpos[2]) * 0.8, 0.45)]
             viewer.sync()
+            if view is not None:
+                view.maybe_update(model, data)
             _time.sleep(steps_per_sync * _DT)
-        frame += 1
 
-    # Smooth exit: blend to walk pose + gradually correct yaw
-    yaw = _get_yaw(data)
-    exit_pose = sp['walk_pose'].copy()
-    exit_pose[2] = -yaw  # L hip yaw
-    exit_pose[8] = -yaw  # R hip yaw
-    _blend(model, data, exit_pose, 1.5, viewer)
-    _hold(model, data, 0.5, viewer)
+    # Decelerate to a standing rest (the "stop") so the gait ends balanced.
+    _exec_stand(model, data, 1.2, viewer, view=view)
 
 
-def _exec_jump(model, data, viewer):
+def _exec_jump(model, data, viewer, view=None):
     """Jump: slow squat, fast push, smooth landing. All through motors."""
     stand = np.zeros(29)
 
@@ -153,14 +198,14 @@ def _exec_jump(model, data, viewer):
         stand[2] = -yaw; stand[8] = -yaw
 
     # 1. Slow squat
-    _blend(model, data, squat, 1.5, viewer)
-    _hold(model, data, 0.5, viewer)
+    _blend(model, data, squat, 1.5, viewer, view=view)
+    _hold(model, data, 0.5, viewer, view=view)
 
     # 2. Push up to standing
-    _blend(model, data, stand, 0.3, viewer)
+    _blend(model, data, stand, 0.3, viewer, view=view)
 
     # 3. Settle
-    _hold(model, data, 1.0, viewer)
+    _hold(model, data, 1.0, viewer, view=view)
 
 
 def setup_model():

@@ -110,6 +110,8 @@ class Sim:
         self._robot = robot
         self._foot_geom_ids: list[int] | None = None
         self._terrain_sensors: dict | None = None   # current terrain context for mid-action checks
+        # Live onboard-camera window (set by run()/controllers); None = off.
+        self._sensor_view = None
 
         # Disturbance engine — opt-in stress testing
         self.disturbance_engine = DisturbanceEngine(
@@ -164,10 +166,16 @@ class Sim:
         mujoco.mj_step(self.model, self.data)
         self.disturbance_engine.post_step()
 
+    def _tick_view(self):
+        """Refresh the live onboard-camera window, if one is attached. Throttled
+        internally, so it is safe to call from every per-frame ``viewer.sync()``."""
+        if self._sensor_view is not None:
+            self._sensor_view.maybe_update(self.model, self.data)
+
     def run(self, commands: str | list[str], cam_distance: float = 0,
             cam_elevation: float = -15, cam_azimuth: float = 270,
             terrain_sensors: list[dict] | None = None,
-            max_retries: int = 3):
+            max_retries: int = 3, camera: bool = True):
         """Run commands in the MuJoCo viewer with closed-loop stability feedback.
 
         Args:
@@ -177,6 +185,8 @@ class Sim:
                              List aligned with commands. Each entry is a dict of
                              SensorSnapshot field overrides from VLA perception.
             max_retries: Max recovery attempts per action before skipping.
+            camera: When True, show a live window of the robot's onboard forward
+                    camera (``head_cam``) updating in real time as it moves.
         """
         if cam_distance == 0:
             cam_distance = 4.0 if self._is_humanoid else 2.5
@@ -184,6 +194,10 @@ class Sim:
         print(f"\n  Cadenza {self._robot}  |  {len(cmds)} commands  |  feedback=ON\n")
 
         lookat_z = self.spec.kin.com_height_stand * 0.5
+
+        if camera and self._sensor_view is None:
+            from cadenza.sensor_view import make_view
+            self._sensor_view = make_view(self._robot, enabled=True)
 
         with mujoco.viewer.launch_passive(self.model, self.data) as viewer:
             viewer.cam.distance = cam_distance
@@ -291,7 +305,12 @@ class Sim:
                 for _ in range(self._phys):
                     self._step()
                 viewer.sync()
+                self._tick_view()
                 time.sleep(0.02)
+
+        if self._sensor_view is not None:
+            self._sensor_view.close()
+            self._sensor_view = None
 
     # ── reactive loop ──
 
@@ -784,6 +803,7 @@ class Sim:
             for _ in range(self._phys):
                 self._step()
             viewer.sync()
+            self._tick_view()
 
             rpy = _rpy(self.data.qpos[3:7])
             omega = self.data.qvel[3:6]
@@ -831,6 +851,7 @@ class Sim:
             for _ in range(self._phys):
                 self._step()
             viewer.sync()
+            self._tick_view()
             wait = t0 + (s + 1) / _HZ - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
@@ -856,6 +877,7 @@ class Sim:
             for _ in range(self._phys):
                 self._step()
             viewer.sync()
+            self._tick_view()
             wait = t0 + (s + 1) / _HZ - time.monotonic()
             if wait > 0:
                 time.sleep(wait)
@@ -924,6 +946,7 @@ class Sim:
                     if abs(rpy[0]) > action.max_roll_rad or abs(rpy[1]) > action.max_pitch_rad:
                         return False
                     viewer.sync()
+                    self._tick_view()
                     wait = t0 + (s + 1) / _HZ - time.monotonic()
                     if wait > 0:
                         time.sleep(wait)
@@ -1001,6 +1024,7 @@ class Sim:
                     self._step()
 
             viewer.sync()
+            self._tick_view()
             wait = t0 + (s + 1) / _HZ - time.monotonic()
             if wait > 0:
                 time.sleep(wait)

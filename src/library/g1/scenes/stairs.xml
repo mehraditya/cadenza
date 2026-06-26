@@ -1,0 +1,239 @@
+<mujoco model="g1_stairs_navigation">
+  <!--
+    Stairs navigation course for the G1 humanoid stack demo.
+
+    Robot: 16-DOF G1 (12 leg joints + 4 arm joints) matching
+    cadenza.locomotion.bipedal_gait.BipedalGaitEngine and the G1 RobotSpec
+    (n_joints=16, poses.stand = 16 zeros). Joint + actuator order is the
+    canonical engine order:
+
+        L: hip_yaw, hip_roll, hip_pitch, knee, ankle_pitch, ankle_roll
+        R: hip_yaw, hip_roll, hip_pitch, knee, ankle_pitch, ankle_roll
+        L_shoulder_pitch, L_elbow, R_shoulder_pitch, R_elbow
+
+    Forward direction is -x (cadenza convention: head/front faces -x).
+    Robot starts at the origin facing the course.
+
+    Terrain mirrors the Go1 stairs course so the same goal works:
+       0.0 ..  -0.8  : flat start area
+      -0.8 ..  -2.0  : obstacle field (box + barrel, off-centre)
+      -2.0 ..  -3.0  : clear approach
+      -3.0 ..  -4.6  : 4 stair steps, 0.40m deep x 0.08m rise each
+      -4.6 ..  -6.4  : elevated top deck, 32cm above ground
+       at -5.5      : GOAL BEACON (green column + flag + yellow pad)
+  -->
+
+  <compiler angle="radian" autolimits="true"/>
+  <option gravity="0 0 -9.81" timestep="0.002" iterations="50" tolerance="1e-10"
+          cone="elliptic" impratio="100"/>
+
+  <default>
+    <joint damping="2.0" frictionloss="0.2" armature="0.02"/>
+    <geom contype="1" conaffinity="1" condim="3"
+          friction="0.6 0.02 0.001" solref="0.005 1" solimp="0.98 0.99 0.001"/>
+    <position kp="350" ctrlrange="-3.14 3.14" forcelimited="true" forcerange="-139 139"/>
+    <default class="foot">
+      <geom condim="6" friction="1.0 0.02 0.01"
+            solimp="0.95 0.99 0.001" solref="0.005 1"/>
+    </default>
+  </default>
+
+  <asset>
+    <texture name="sky" type="skybox" builtin="gradient"
+             rgb1="0.45 0.60 0.85" rgb2="0.75 0.85 0.95"
+             width="512" height="512" mark="random" markrgb="1 1 1"
+             random="0.01"/>
+    <texture name="ground_tex" type="2d" builtin="flat"
+             rgb1="0.72 0.70 0.66" rgb2="0.68 0.66 0.62"
+             width="512" height="512"/>
+    <material name="ground_mat" texture="ground_tex" texrepeat="12 12"
+              texuniform="true" reflectance="0.02" rgba="0.75 0.73 0.70 1"/>
+
+    <material name="cardboard"  rgba="0.72 0.53 0.30 1" reflectance="0.02"/>
+    <material name="barrel"     rgba="0.55 0.18 0.18 1" reflectance="0.20"/>
+    <material name="step_mat"   rgba="0.58 0.55 0.50 1" reflectance="0.05"/>
+    <material name="deck_mat"   rgba="0.50 0.46 0.40 1" reflectance="0.04"/>
+    <material name="goal_pad"   rgba="0.95 0.85 0.05 1" reflectance="0.30"
+              emission="0.25"/>
+    <material name="beacon"     rgba="0.10 0.85 0.35 1" reflectance="0.10"
+              emission="0.20"/>
+    <material name="flag"       rgba="0.95 0.20 0.20 1" reflectance="0.10"/>
+    <material name="body_mat"   rgba="0.15 0.15 0.18 1" reflectance="0.05"/>
+    <material name="leg_mat"    rgba="0.12 0.12 0.15 1" reflectance="0.03"/>
+    <material name="arm_mat"    rgba="0.20 0.40 0.70 1" reflectance="0.05"/>
+  </asset>
+
+  <worldbody>
+    <!-- Lighting -->
+    <light name="sun" pos="3 3 12" dir="-0.3 -0.2 -1" diffuse="1.2 1.15 1.0"
+           specular="0.5 0.5 0.4" castshadow="true"/>
+    <light name="ambient" pos="0 0 10" dir="0 0 -1" diffuse="0.35 0.38 0.45"
+           specular="0 0 0" castshadow="false"/>
+    <light name="fill"   pos="-5 -3 6" dir="0.3 0.2 -1" diffuse="0.25 0.25 0.30"
+           castshadow="false"/>
+
+    <!-- Ground plane -->
+    <geom name="floor" type="plane" size="20 20 0.1" material="ground_mat"
+          condim="6" friction="1.0 0.02 0.01"/>
+
+    <!-- == Obstacle 1 - cardboard box, slightly left of centerline == -->
+    <body name="obstacle_box" pos="-1.2 0.18 0.15">
+      <geom type="box" size="0.15 0.15 0.15" material="cardboard"
+            mass="5.0" friction="0.7 0.02 0.001"/>
+      <geom type="box" size="0.151 0.03 0.003" pos="0 0 0.153"
+            rgba="0.85 0.75 0.55 1" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- == Obstacle 2 - barrel, slightly right of centerline == -->
+    <body name="obstacle_barrel" pos="-1.9 -0.20 0.20">
+      <geom type="cylinder" size="0.18 0.20" material="barrel"
+            mass="12.0" friction="0.7 0.02 0.001"/>
+      <geom type="cylinder" size="0.181 0.03" pos="0 0 0.10"
+            rgba="0.10 0.10 0.10 1" contype="0" conaffinity="0"/>
+      <geom type="cylinder" size="0.181 0.03" pos="0 0 -0.12"
+            rgba="0.10 0.10 0.10 1" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- == Stairs - 4 steps, 0.40m deep x 0.08m rise == -->
+    <body name="step_1" pos="-3.2 0 0.04">
+      <geom type="box" size="0.20 0.80 0.04" material="step_mat"
+            friction="0.9 0.02 0.001"/>
+    </body>
+    <body name="step_2" pos="-3.6 0 0.08">
+      <geom type="box" size="0.20 0.80 0.08" material="step_mat"
+            friction="0.9 0.02 0.001"/>
+    </body>
+    <body name="step_3" pos="-4.0 0 0.12">
+      <geom type="box" size="0.20 0.80 0.12" material="step_mat"
+            friction="0.9 0.02 0.001"/>
+    </body>
+    <body name="step_4" pos="-4.4 0 0.16">
+      <geom type="box" size="0.20 0.80 0.16" material="step_mat"
+            friction="0.9 0.02 0.001"/>
+    </body>
+
+    <!-- == Top deck == -->
+    <body name="top_deck" pos="-5.5 0 0.16">
+      <geom type="box" size="0.90 0.80 0.16" material="deck_mat"
+            friction="0.9 0.02 0.001"/>
+    </body>
+
+    <!-- == Goal beacon == -->
+    <geom name="goal_pad_disc" type="cylinder" size="0.30 0.005"
+          pos="-5.5 0 0.328" material="goal_pad"
+          contype="0" conaffinity="0"/>
+    <geom name="goal_beacon" type="cylinder" size="0.05 0.70"
+          pos="-5.5 0 1.03" material="beacon"
+          contype="0" conaffinity="0"/>
+    <geom name="goal_flag" type="box" size="0.18 0.02 0.10"
+          pos="-5.32 0 1.65" material="flag"
+          contype="0" conaffinity="0"/>
+
+    <!-- == G1 humanoid (16-DOF) ================================== -->
+    <!-- Pelvis frame origin starts at z = com_height_stand (0.75).
+         Hips sit 0.135 below the pelvis; straight legs (zero pose)
+         span 0.30 thigh + 0.30 calf + 0.015 foot = 0.615, so the
+         foot soles rest at z = 0 when the trunk is at 0.75. -->
+    <body name="trunk" pos="0 0 0.75">
+      <freejoint name="root"/>
+      <site name="imu" pos="0 0 0" size="0.005"/>
+
+      <!-- Pelvis — heavy and low to keep the CoM near the hips so the
+           straight-leg stand can be stabilised by ankle feedback alone. -->
+      <geom name="pelvis" type="box" size="0.10 0.0875 0.09" pos="0 0 -0.08"
+            mass="16.0" material="body_mat"/>
+      <!-- Light torso shell above the pelvis (visual; little mass up high) -->
+      <geom name="torso" type="box" size="0.08 0.09 0.10" pos="0 0 0.07"
+            mass="3.0" material="body_mat"/>
+      <!-- Head marker + forward camera (head faces -x), kept light -->
+      <geom name="head_marker" type="sphere" size="0.04" pos="-0.05 0 0.26"
+            rgba="0.1 0.95 0.3 1" contype="0" conaffinity="0" mass="0.05"/>
+      <camera name="forward" pos="-0.08 0 0.24" euler="1.5708 -1.5708 0"
+              fovy="70"/>
+
+      <!-- ===== Left leg ===== -->
+      <body name="L_thigh" pos="0 0.0875 -0.135">
+        <joint name="L_hip_yaw"   axis="0 0 1" range="-2.87 2.87"/>
+        <joint name="L_hip_roll"  axis="1 0 0" range="-0.52 0.52"/>
+        <joint name="L_hip_pitch" axis="0 1 0" range="-2.53 2.53"/>
+        <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -0.30"
+              mass="2.0" material="leg_mat"/>
+        <body name="L_calf" pos="0 0 -0.30">
+          <joint name="L_knee" axis="0 1 0" range="-0.26 2.05"/>
+          <geom type="capsule" size="0.022" fromto="0 0 0 0 0 -0.27"
+                mass="1.5" material="leg_mat"/>
+          <body name="L_foot" pos="0 0 -0.30">
+            <joint name="L_ankle_pitch" axis="0 1 0" range="-0.87 0.52"/>
+            <joint name="L_ankle_roll"  axis="1 0 0" range="-0.26 0.26"/>
+            <geom name="L_foot_geom" type="box" size="0.13 0.045 0.015"
+                  pos="-0.04 0 0" mass="0.6" material="leg_mat" class="foot"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== Right leg ===== -->
+      <body name="R_thigh" pos="0 -0.0875 -0.135">
+        <joint name="R_hip_yaw"   axis="0 0 1" range="-2.87 2.87"/>
+        <joint name="R_hip_roll"  axis="1 0 0" range="-0.52 0.52"/>
+        <joint name="R_hip_pitch" axis="0 1 0" range="-2.53 2.53"/>
+        <geom type="capsule" size="0.035" fromto="0 0 0 0 0 -0.30"
+              mass="2.0" material="leg_mat"/>
+        <body name="R_calf" pos="0 0 -0.30">
+          <joint name="R_knee" axis="0 1 0" range="-0.26 2.05"/>
+          <geom type="capsule" size="0.022" fromto="0 0 0 0 0 -0.27"
+                mass="1.5" material="leg_mat"/>
+          <body name="R_foot" pos="0 0 -0.30">
+            <joint name="R_ankle_pitch" axis="0 1 0" range="-0.87 0.52"/>
+            <joint name="R_ankle_roll"  axis="1 0 0" range="-0.26 0.26"/>
+            <geom name="R_foot_geom" type="box" size="0.13 0.045 0.015"
+                  pos="-0.04 0 0" mass="0.6" material="leg_mat" class="foot"/>
+          </body>
+        </body>
+      </body>
+
+      <!-- ===== Left arm ===== -->
+      <body name="L_upper_arm" pos="0 0.16 0.12">
+        <joint name="L_shoulder_pitch" axis="0 1 0" range="-3.09 2.67"/>
+        <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.20"
+              mass="0.8" material="arm_mat"/>
+        <body name="L_forearm" pos="0 0 -0.20">
+          <joint name="L_elbow" axis="0 1 0" range="-0.10 2.09"/>
+          <geom type="capsule" size="0.021" fromto="0 0 0 0 0 -0.18"
+                mass="0.5" material="arm_mat"/>
+        </body>
+      </body>
+
+      <!-- ===== Right arm ===== -->
+      <body name="R_upper_arm" pos="0 -0.16 0.12">
+        <joint name="R_shoulder_pitch" axis="0 1 0" range="-3.09 2.67"/>
+        <geom type="capsule" size="0.025" fromto="0 0 0 0 0 -0.20"
+              mass="0.8" material="arm_mat"/>
+        <body name="R_forearm" pos="0 0 -0.20">
+          <joint name="R_elbow" axis="0 1 0" range="-0.10 2.09"/>
+          <geom type="capsule" size="0.021" fromto="0 0 0 0 0 -0.18"
+                mass="0.5" material="arm_mat"/>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <!-- Actuator order MUST match BipedalGaitEngine output (16-vector). -->
+  <actuator>
+    <position name="L_hip_yaw"      joint="L_hip_yaw"      forcerange="-88 88"/>
+    <position name="L_hip_roll"     joint="L_hip_roll"     forcerange="-88 88"/>
+    <position name="L_hip_pitch"    joint="L_hip_pitch"    forcerange="-88 88"/>
+    <position name="L_knee"         joint="L_knee"         forcerange="-139 139"/>
+    <position name="L_ankle_pitch"  joint="L_ankle_pitch"  kp="400" forcerange="-120 120"/>
+    <position name="L_ankle_roll"   joint="L_ankle_roll"   kp="400" forcerange="-120 120"/>
+    <position name="R_hip_yaw"      joint="R_hip_yaw"      forcerange="-88 88"/>
+    <position name="R_hip_roll"     joint="R_hip_roll"     forcerange="-88 88"/>
+    <position name="R_hip_pitch"    joint="R_hip_pitch"    forcerange="-88 88"/>
+    <position name="R_knee"         joint="R_knee"         forcerange="-139 139"/>
+    <position name="R_ankle_pitch"  joint="R_ankle_pitch"  kp="400" forcerange="-120 120"/>
+    <position name="R_ankle_roll"   joint="R_ankle_roll"   kp="400" forcerange="-120 120"/>
+    <position name="L_shoulder_pitch" joint="L_shoulder_pitch" kp="60" forcerange="-40 40"/>
+    <position name="L_elbow"          joint="L_elbow"          kp="60" forcerange="-40 40"/>
+    <position name="R_shoulder_pitch" joint="R_shoulder_pitch" kp="60" forcerange="-40 40"/>
+    <position name="R_elbow"          joint="R_elbow"          kp="60" forcerange="-40 40"/>
+  </actuator>
+</mujoco>

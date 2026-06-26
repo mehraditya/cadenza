@@ -238,7 +238,8 @@ class Go1:
             max_iterations: int = 250,
             headless: bool = False,
             verbose: bool = True,
-            streaming: bool = False):
+            streaming: bool = False,
+            camera: bool = True):
         """Execute a sequence of actions, or drive a goal with a world model.
 
         Two shapes:
@@ -291,6 +292,11 @@ class Go1:
         lib = get_library("go1")
         spec = get_spec("go1")
         steps = self._normalize_sequence(sequence)
+
+        # Live onboard forward-camera window (head_cam), updated as Go1 moves.
+        if camera:
+            from cadenza.sensor_view import make_view
+            sim._sensor_view = make_view("go1", enabled=True)
 
         # Hand control of per-step VLA logic to the configured orchestrator,
         # if any. Without one, actions execute open-loop with no model.
@@ -351,8 +357,12 @@ class Go1:
                     for _ in range(sim._phys):
                         mujoco.mj_step(sim.model, sim.data)
                     viewer.sync()
+                    sim._tick_view()
                     time.sleep(0.02)
         finally:
+            if sim._sensor_view is not None:
+                sim._sensor_view.close()
+                sim._sensor_view = None
             if inference is not None:
                 inference.teardown()
                 inference._stream = None
